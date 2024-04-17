@@ -177,7 +177,7 @@ class CosineWarmupScheduler(optim.lr_scheduler._LRScheduler):
         return lr_factor
     
 class TransformerPredictor(pl.LightningModule):
-    def __init__(self, vocab_size, input_dim, model_dim, num_classes, num_heads, num_layers, lr, warmup, max_iters, dropout=0.0, input_dropout=0.0):
+    def __init__(self, vocab_size, input_dim, model_dim, num_classes, num_heads, num_layers, lr, warmup, max_iters, dropout=0.0, input_dropout=0.0, weight_decay=0.0):
         super().__init__()
         self.save_hyperparameters()
         self._create_model()
@@ -188,7 +188,7 @@ class TransformerPredictor(pl.LightningModule):
             nn.Dropout(self.hparams.input_dropout), 
             nn.Linear(self.hparams.input_dim, self.hparams.model_dim)
         )
-        # self.input_net = nn.Embedding(self.hparams.vocab_size, self.hparams.input_dim)
+
         # Positional encoding for sequences
         self.positional_encoding = PositionalEncoding(d_model=self.hparams.model_dim)
         # Transformer
@@ -202,7 +202,7 @@ class TransformerPredictor(pl.LightningModule):
         # Output classifier per sequence lement
         self.output_net = nn.Sequential(
             # nn.Linear(self.hparams.model_dim, self.hparams.model_dim),
-            AttentionPooling(self.hparams.model_dim, self.hparams.model_dim),
+            # AttentionPooling(self.hparams.model_dim, self.hparams.model_dim),
             nn.LayerNorm(self.hparams.model_dim),
             nn.ReLU(inplace=True),
             nn.Dropout(self.hparams.dropout),
@@ -222,12 +222,13 @@ class TransformerPredictor(pl.LightningModule):
         x = self.input_net(x)
         if add_positional_encoding:
             x = self.positional_encoding(x)
-        x = self.transformer(x, mask=mask)
+        x = self.transformer(x, mask=mask)  # [Batch, SeqLen, ModDim]
+        x = torch.mean(x, dim=1)            # GlobalAveragePooling
         x = self.output_net(x)
         return x
     
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.hparams.lr)
+        optimizer = optim.Adam(self.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weight_decay)
         self.lr_scheduler = CosineWarmupScheduler(optimizer, warmup=self.hparams.warmup, max_iters=self.hparams.max_iters)
         return optimizer
     
@@ -275,7 +276,7 @@ class ScPredictor(TransformerPredictor):
         preds = preds.reshape(labels.shape)
         return preds
     
-CHECKPOINT_PATH = "/home/zhulin/workspace/Sun/ckpt/"
+CHECKPOINT_PATH = "/home/zhulin/workspace/Sun-core/ckpt"
 
 def training(train_loader, val_loader, **kwargs):
     torch.set_float32_matmul_precision(precision="high")
@@ -295,6 +296,7 @@ def training(train_loader, val_loader, **kwargs):
         # gradient_clip_val=10,
         limit_train_batches= 5000, 
         # limit_val_batches=5000,
+        enable_progress_bar=False
         
     )
     trainer.logger._default_hp_metric = None
@@ -305,17 +307,22 @@ def training(train_loader, val_loader, **kwargs):
         model = ScPredictor.load_from_checkpoint(pretrained_filename)
     else:
         model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
-        # ckpt = "/home/zhulin/workspace/Sun/ckpt/ScPredicTask/lightning_logs/version_7/checkpoints/epoch=99-step=62500.ckpt"
         trainer.fit(model, train_loader, val_loader)
-    
+
     return model
 
 if __name__ == "__main__":
 
     try:
-        train_dataset = SCDataset("/mnt/sdd1/data/sun/cdatasets_train.txt")
-        validate_dataset = SCDataset("/mnt/sdd1/data/sun/cdatasets_val.txt")
+        train_dataset = SCDataset("/home/zhulin/datasets/cdatasets_train.txt")
+        validate_dataset = SCDataset("/home/zhulin/datasets/cdatasets_val.txt")
+        test_dataset = SCDataset("/home/zhulin/datasets/cdatasets_test.txt")
 
+        # # 测试是否数据原因导致过拟合
+        # from torch.utils.data.dataset import ConcatDataset
+        # train_dataset = ConcatDataset([train_dataset, test_dataset])
+
+        # 测试代码验证
         train_loader = DataLoader(train_dataset, batch_size=64, collate_fn=sc_collate_fn, num_workers=4, 
                                   sampler=ImbalancedDatasetSampler(train_dataset))
         val_loader = DataLoader(validate_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
@@ -329,8 +336,10 @@ if __name__ == "__main__":
             num_classes=1,
             num_layers=1,
             dropout=0.4,
+            input_dropout=0.2,
             lr=1e-5,
             warmup=50,
+            weight_decay=1e-4
         )
 
     except Exception as e:

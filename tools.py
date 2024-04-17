@@ -13,7 +13,7 @@ import yaml
 
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 sys.path.append(__PATH__)  
-with open("./core/config/config.yml", "r") as config_open:
+with open("config.yml", "r") as config_open:
     config_data = yaml.safe_load(config_open)["settings"]
 # ---------------------- 全局变量 -------------------------- #
 # 校园网账号密码
