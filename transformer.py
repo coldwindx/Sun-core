@@ -8,14 +8,16 @@ import torch
 import torch.nn as nn
 from torch import optim
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import ConcatDataset, DataLoader, random_split
+from torch.utils.data.sampler import WeightedRandomSampler
 import lightning as pl
 from lightning.pytorch.callbacks import ModelCheckpoint, StochasticWeightAveraging
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
-from sampler import ImbalancedDatasetSampler
+
 from tools import Notice
 from dataset import SCDataset, sc_collate_fn
+from network import MaskedMeanPooling
 
 seed = 6
 random.seed(seed)
@@ -23,7 +25,6 @@ np.random.seed(seed)
 torch.manual_seed(seed)                    # 为CPU设置随机种子
 torch.cuda.manual_seed(seed)               # 为当前GPU设置随机种子
 torch.cuda.manual_seed_all(seed)           # 为所有GPU设置随机种子
-SEED = torch.Generator().manual_seed(seed)
 pl.seed_everything(seed, workers=True)
 
 def scaled_dot_product(q, k, v, mask=None):
@@ -37,7 +38,8 @@ def scaled_dot_product(q, k, v, mask=None):
     attn_logits = torch.matmul(q, k.transpose(-2, -1))
     attn_logits = attn_logits / math.sqrt(d_k)
     if mask is not None:
-        attn_logits = attn_logits.masked_fill(mask == 0, -9e15)
+        attn_mask = mask.unsqueeze(1).unsqueeze(2)
+        attn_logits = attn_logits.masked_fill(attn_mask == 0, -9e15)
     attention = F.softmax(attn_logits, dim=-1)
     values = torch.matmul(attention, v)
     return values, attention
@@ -78,20 +80,7 @@ class MultiheadAttention(nn.Module):
         if return_attention: 
             return o, attention
         return o
-    
-class AttentionPooling(nn.Module):
-    def __init__(self, input_dim, hidden_dim):
-        super().__init__()
-        self.W = nn.Linear(input_dim, hidden_dim)
-        self.U = nn.Linear(hidden_dim, 1)
-    def forward(self, x):
-        # x: [BatchSize, SeqLen, InputDim] -> [SeqLen, BatchSize, InputDim]
-        x = x.permute(1, 0, 2)
-        scores = self.U(torch.tanh(self.W(x)))
-        weights = F.softmax(scores, dim=0)
-        pooled = torch.sum(x * weights, dim=0)
-        return pooled
-    
+
 class EncoderBlock(nn.Module):
     def __init__(self, input_dim, num_heads, dim_feedforward, dropout=0.0):
         """EncoderBlock.
@@ -200,6 +189,7 @@ class TransformerPredictor(pl.LightningModule):
             dropout=self.hparams.dropout
         )
         # Output classifier per sequence lement
+        self.pooling_net = MaskedMeanPooling()
         self.output_net = nn.Sequential(
             # nn.Linear(self.hparams.model_dim, self.hparams.model_dim),
             # AttentionPooling(self.hparams.model_dim, self.hparams.model_dim),
@@ -223,7 +213,8 @@ class TransformerPredictor(pl.LightningModule):
         if add_positional_encoding:
             x = self.positional_encoding(x)
         x = self.transformer(x, mask=mask)  # [Batch, SeqLen, ModDim]
-        x = torch.mean(x, dim=1)            # GlobalAveragePooling
+        x = self.pooling_net(x, mask=mask)            # GlobalAveragePooling
+        # x = x[:, 0, :]                      # CLS Pooling
         x = self.output_net(x)
         return x
     
@@ -247,7 +238,6 @@ class TransformerPredictor(pl.LightningModule):
 class ScPredictor(TransformerPredictor):
     def _calculate_loss(self, batch, mode="train"):
         inp_data, mask, _, labels = batch
-        mask = mask.unsqueeze(1).unsqueeze(2)
         preds = self.forward(inp_data, mask=mask, add_positional_encoding=True)
         preds = preds.reshape(labels.shape)
 
@@ -271,7 +261,6 @@ class ScPredictor(TransformerPredictor):
     def predict_step(self, batch, batch_idx):
         # padded_sent_seq["input_ids"], padded_sent_seq["attention_mask"], data_length, labels
         inp_data, mask, _, labels = batch
-        mask = mask.unsqueeze(1).unsqueeze(2)
         preds = self.forward(inp_data, mask=mask, add_positional_encoding=True)
         preds = preds.reshape(labels.shape)
         return preds
@@ -316,16 +305,21 @@ if __name__ == "__main__":
     try:
         train_dataset = SCDataset("/home/zhulin/datasets/cdatasets_train.txt")
         validate_dataset = SCDataset("/home/zhulin/datasets/cdatasets_val.txt")
-        test_dataset = SCDataset("/home/zhulin/datasets/cdatasets_test.txt")
+        # test_dataset = SCDataset("/home/zhulin/datasets/cdatasets_test.txt")
 
-        # # 测试是否数据原因导致过拟合
-        # from torch.utils.data.dataset import ConcatDataset
-        # train_dataset = ConcatDataset([train_dataset, test_dataset])
+        full_dataset = ConcatDataset([train_dataset, validate_dataset])
+        train_size = int(0.6 * len(full_dataset))
+        val_size = int(0.2 * len(full_dataset))
+        test_size = len(full_dataset) - train_size - val_size
+        train_dataset, val_dataset, test_dataset = random_split(full_dataset, [train_size, val_size, test_size])
 
-        # 测试代码验证
-        train_loader = DataLoader(train_dataset, batch_size=64, collate_fn=sc_collate_fn, num_workers=4, 
-                                  sampler=ImbalancedDatasetSampler(train_dataset))
-        val_loader = DataLoader(validate_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+        train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, collate_fn=sc_collate_fn, num_workers=4)
+
+        # weights = [10 if label == 1 else 1 for _, label in train_dataset]
+        # sampler = WeightedRandomSampler(weights,num_samples=10, replacement=True)
+        # train_loader = DataLoader(train_dataset, batch_size=64, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
+        
+        val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
         model = training(
             train_loader, val_loader,
@@ -335,7 +329,7 @@ if __name__ == "__main__":
             num_heads=8,
             num_classes=1,
             num_layers=1,
-            dropout=0.4,
+            dropout=0.5,
             input_dropout=0.2,
             lr=1e-5,
             warmup=50,

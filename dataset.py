@@ -2,13 +2,13 @@ import os
 import sys
 from loguru import logger
 import torch
-from torch.utils import data
+from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer
 
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
 
-class SCDataset(data.Dataset):
+class SCDataset(Dataset):
     def __init__(self, path):
         self.data, self.labels = [], []
         with open(path, 'r') as f:
@@ -44,7 +44,7 @@ def sc_collate_fn(batch_data):
     return padded_sent_seq["input_ids"], padded_sent_seq["attention_mask"], data_length, labels
 
 
-class MCDataset(data.Dataset):
+class MCDataset(Dataset):
     def __init__(self, path):
         self.labels = []
         self.c1, self.c2, self.c3, self.c4 = [], [], [], []
@@ -92,7 +92,7 @@ if __name__ == "__main__":
         # datasets = KellectDataset("")
         
         datasets = SCDataset("/mnt/sdd1/data/sun/cdatasets.txt", tokenizer)
-        train_loader = data.DataLoader(datasets, batch_size=128, shuffle=False, collate_fn=sc_collate_fn)
+        train_loader = DataLoader(datasets, batch_size=128, shuffle=False, collate_fn=sc_collate_fn)
         for batch in train_loader:
             print(batch)
             break

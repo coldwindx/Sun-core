@@ -118,7 +118,7 @@ def main(ckpt):
     predictions = torch.cat(predictions, dim=0)
     y_hat = [1 if i >= 0.5 else 0 for i in predictions]
     labels = test_dataset.get_labels()
-    diff = [(x == labels[i]) for i, x in enumerate(y_hat)]
+    
     tp = sum([(x == labels[i] and labels[i] == 1) for i, x in enumerate(y_hat)])
     tn = sum([(x == labels[i] and labels[i] == 0) for i, x in enumerate(y_hat)])
     fp = sum([(x != labels[i] and labels[i] == 0) for i, x in enumerate(y_hat)])
