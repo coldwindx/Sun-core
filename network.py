@@ -28,9 +28,7 @@ class MaskedMeanPooling(nn.Module):
             x:      [BatchSize, SeqLen, Dim]
             mask:   [BatchSize, SeqLen]
         '''
-        x = (x * mask.unsqueeze(-1)).sum(dim=1)
-        mask_sum = mask.sum(dim=1).unsqueeze(1)
-        return x / mask_sum
+        return (x * mask.unsqueeze(-1)).sum(dim=1) / mask.sum(dim=1).unsqueeze(1)
 
 if __name__ == "__main__":
     mask = torch.tensor([

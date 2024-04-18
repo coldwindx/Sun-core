@@ -9,12 +9,12 @@ import torch.nn as nn
 from torch import optim
 import torch.nn.functional as F
 from torch.utils.data import ConcatDataset, DataLoader, random_split
-from torch.utils.data.sampler import WeightedRandomSampler
 import lightning as pl
 from lightning.pytorch.callbacks import ModelCheckpoint, StochasticWeightAveraging
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
 
+from sampler import ImbalancedDatasetSampler
 from tools import Notice
 from dataset import SCDataset, sc_collate_fn
 from network import MaskedMeanPooling
@@ -132,7 +132,7 @@ class TransformerEncoder(nn.Module):
         return x
 
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=1000):
+    def __init__(self, d_model, max_len=4096):
         super().__init__()
 
         # Create matrix of [SeqLen, HiddenDim] representing the positional encoding for max_len inputs
@@ -281,12 +281,11 @@ def training(train_loader, val_loader, **kwargs):
         # precision="bf16-true",
         devices=1,
         max_epochs=120,
-        accumulate_grad_batches=8,
+        accumulate_grad_batches=64,
         # gradient_clip_val=10,
         limit_train_batches= 5000, 
         # limit_val_batches=5000,
         enable_progress_bar=False
-        
     )
     trainer.logger._default_hp_metric = None
 
@@ -313,13 +312,11 @@ if __name__ == "__main__":
         test_size = len(full_dataset) - train_size - val_size
         train_dataset, val_dataset, test_dataset = random_split(full_dataset, [train_size, val_size, test_size])
 
-        train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, collate_fn=sc_collate_fn, num_workers=4)
-
-        # weights = [10 if label == 1 else 1 for _, label in train_dataset]
-        # sampler = WeightedRandomSampler(weights,num_samples=10, replacement=True)
-        # train_loader = DataLoader(train_dataset, batch_size=64, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
+        # train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, collate_fn=sc_collate_fn, num_workers=4)
+        sampler = ImbalancedDatasetSampler(train_dataset)
+        train_loader = DataLoader(train_dataset, batch_size=8, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
         
-        val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+        val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
         model = training(
             train_loader, val_loader,
