@@ -214,7 +214,6 @@ class TransformerPredictor(pl.LightningModule):
             x = self.positional_encoding(x)
         x = self.transformer(x, mask=mask)  # [Batch, SeqLen, ModDim]
         x = self.pooling_net(x, mask=mask)            # GlobalAveragePooling
-        # x = x[:, 0, :]                      # CLS Pooling
         x = self.output_net(x)
         return x
     
@@ -280,12 +279,12 @@ def training(train_loader, val_loader, **kwargs):
         accelerator="auto",
         # precision="bf16-true",
         devices=1,
-        max_epochs=120,
-        accumulate_grad_batches=64,
+        max_epochs=80,
+        accumulate_grad_batches=4,
         # gradient_clip_val=10,
         limit_train_batches= 5000, 
         # limit_val_batches=5000,
-        enable_progress_bar=False
+        # enable_progress_bar=False
     )
     trainer.logger._default_hp_metric = None
 
@@ -314,9 +313,9 @@ if __name__ == "__main__":
 
         # train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, collate_fn=sc_collate_fn, num_workers=4)
         sampler = ImbalancedDatasetSampler(train_dataset)
-        train_loader = DataLoader(train_dataset, batch_size=8, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
+        train_loader = DataLoader(train_dataset, batch_size=32, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
         
-        val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+        val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
         model = training(
             train_loader, val_loader,

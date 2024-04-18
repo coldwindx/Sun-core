@@ -40,7 +40,7 @@ def sc_collate_fn(batch_data):
     data_length = [len(x[0]) for x in batch_data]
     sent_seq = [x[0] for x in batch_data]
     labels = torch.tensor([x[1] for x in batch_data], dtype=torch.float32)
-    padded_sent_seq = tokenizer(sent_seq, padding=True, truncation=True, max_length=4096, return_tensors="pt")
+    padded_sent_seq = tokenizer(sent_seq, padding=True, truncation=True, max_length=2048, return_tensors="pt")
     return padded_sent_seq["input_ids"], padded_sent_seq["attention_mask"], data_length, labels
 
 
