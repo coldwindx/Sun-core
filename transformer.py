@@ -294,7 +294,8 @@ def training(train_loader, val_loader, **kwargs):
         model = ScPredictor.load_from_checkpoint(pretrained_filename)
     else:
         model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
-        trainer.fit(model, train_loader, val_loader)
+        CKPT_PATH = "/home/zhulin/workspace/Sun-core/ckpt/ScPredicTask/lightning_logs/version_3/checkpoints/epoch=37-step=47500.ckpt"
+        trainer.fit(model, train_loader, val_loader, ckpt_path=CKPT_PATH)
 
     return model
 

@@ -7,6 +7,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 import torch
 from transformers import AutoTokenizer
+
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
 
@@ -18,9 +19,10 @@ torch.cuda.manual_seed_all(seed)           # 为所有GPU设置随机种子
 SEED = torch.Generator().manual_seed(seed)
 pl.seed_everything(seed, workers=True)
 
+TEST_DATASETS_PATH = "/home/zhulin/datasets/cdatasets_test.txt.d"
+PRETRAIN_PATH = "/home/zhulin/pretrain/"
+
 def distribution():
-    TEST_DATASETS_PATH = "/home/zhulin/datasets/cdatasets_test.txt"
-    PRETRAIN_PATH = "/home/zhulin/pretrain/"
     tokenizer = AutoTokenizer.from_pretrained(PRETRAIN_PATH + 'bert_pretrain_uncased/')
     # 读取文本文件并分句，并统计句子长度
     length_distribution = {}
@@ -59,9 +61,39 @@ def distribution():
     # 显示图形
     plt.savefig("distribution.png")
     plt.show()
+
+def fp_analyzer(sample):
+    datas, labels, pids, indexes = [], [], [], []
+    with open(TEST_DATASETS_PATH, 'r') as f:
+        txt = f.readlines()
+        cnt: int = 0
+        lenght: int = len(txt)
+        while cnt < lenght:
+            if cnt % 2 == 1:
+                # 第一行: [索引 UniqueKey PID 标签]
+                index, unique_key, pid, label = txt[cnt].split("\t")
+                indexes.append(index)
+                pids.append(int(pid))
+                labels.append(int(label))
+                cnt += 1
+                # 数据
+                cnt += 1
+                datas.append(txt[cnt])
+    
+    idxes = []
+    for i, index in enumerate(indexes):
+        if index == sample:
+            idxes.append(i)
+
+    for i in idxes:
+        if pids[i] != 5052:
+            continue
+        print(datas[i])
+
 if __name__ == "__main__":
     try:
-        distribution()
+        # distribution()
+        fp_analyzer("kad29f77ee86ed9827158347befa8998d")
     except Exception as e:
         logger.exception(e)
     # Notice().send("[+] Test finished!")

@@ -15,8 +15,6 @@ class SCDataset(Dataset):
             cnt: int = 0
             for line in f:
                 cnt += 1
-                # if cnt > 2000:
-                #     break
                 if cnt % 2 == 1:
                     # 第一行: [索引 UniqueKey PID 标签]
                     line = line.split("\t")[-1]
