@@ -3,6 +3,7 @@ import os
 import random
 import sys
 from loguru import logger
+from sklearn.metrics import accuracy_score, confusion_matrix
 import lightning as pl
 import torch
 from torch.utils.data import DataLoader
@@ -98,7 +99,7 @@ def test(ckpt):
 def main(ckpt):
     torch.set_float32_matmul_precision(precision="high")
     # load model
-    CHECKPOINT_PATH = "/home/zhulin/workspace/Sun-core/ckpt/ScPredicTask/lightning_logs/version_3/checkpoints/"
+    CHECKPOINT_PATH = "/home/zhulin/workspace/Sun-core/ckpt/ScPredicTask/lightning_logs/version_4/checkpoints/"
 
     trainer = pl.Trainer(enable_checkpointing=False, logger=False)
     
@@ -106,8 +107,7 @@ def main(ckpt):
     test_dataset = SCDataset(TEST_DATASETS_PATH)
     test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
-
-    ckpt = f"epoch=37-step=47500.ckpt"
+    ckpt = f"epoch=70-step=88750.ckpt"
     pretrained_filename = os.path.join(CHECKPOINT_PATH, ckpt)
     classifier = ScPredictor.load_from_checkpoint(pretrained_filename)
     classifier.eval()
@@ -146,32 +146,17 @@ def main(ckpt):
 
     stp, stn, sfp, sfn = 0, 0, 0, 0
     for index in test_samples:
-        tp, tn, fp, fn = 0, 0, 0, 0
-        idx = samples[index]
         plabel = collections.defaultdict(int)
         psign = collections.defaultdict(int)
         # 规约
-        for id in idx:
+        for id in samples[index]:
             pkey, label, sign = pkeys[id], labels[id], y_hat[id]
             plabel[pkey] = label
             psign[pkey] = psign[pkey] or sign
         # 指标汇总
-        for pkey, label in plabel.items():
-            sign = psign[pkey]
-            if 0 == label:
-                if 0 == sign:
-                    tn += 1
-                else:
-                    fp += 1
-                    # 误报
-                    print(pkey)
-            else:
-                if 0 == sign:
-                    # 漏报
-                    fn += 1
-                    print(pkey)
-                else:
-                    tp += 1
+        truths = [label for _, label in plabel.items()]
+        signs = [psign[pkey] for pkey, _ in plabel.items()]
+        tn, fp, fn, tp = confusion_matrix(truths, signs).ravel()
         stp += tp
         stn += tn
         sfp += fp
@@ -188,7 +173,7 @@ def main(ckpt):
     fprv = fpr(stp, stn, sfp, sfn)
     auc = 2 * pre * rec / (pre + rec)
     print(f"ALL\t{stp}\t{stn}\t{sfp}\t{sfn}\t{acc}\t{pre}\t{rec}\t{fprv}\t{auc}")
-
+   
 if __name__ == "__main__":
     try:
         main(ckpt="")
