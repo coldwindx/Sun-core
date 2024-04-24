@@ -8,14 +8,14 @@ import torch.nn as nn
 from torch import optim
 import torch.nn.functional as F
 from torch.utils.data import ConcatDataset, DataLoader, random_split
-from torch.nn.utils.rnn import pack_padded_sequence
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import lightning as pl
 from lightning.pytorch.callbacks import ModelCheckpoint, StochasticWeightAveraging
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
 
 from sampler import ImbalancedDatasetSampler
-from dataset import SCDataset, sc_collate_fn
+from dataset import ScDataset, sc_collate_fn
 
 seed = 6
 random.seed(seed)
@@ -24,6 +24,21 @@ torch.manual_seed(seed)                    # 为CPU设置随机种子
 torch.cuda.manual_seed(seed)               # 为当前GPU设置随机种子
 torch.cuda.manual_seed_all(seed)           # 为所有GPU设置随机种子
 pl.seed_everything(seed, workers=True)
+
+def prepare_pack_padded_sequence(inputs_words, seq_lengths, descending=True):
+    """
+    for rnn model
+    :param device:
+    :param inputs_words:
+    :param seq_lengths:
+    :param descending:
+    :return:
+    """
+    sorted_seq_lengths, indices = torch.sort(seq_lengths, descending=descending)
+    _, desorted_indices = torch.sort(indices, descending=False)
+    sorted_inputs_words = inputs_words[indices]
+    return sorted_inputs_words, sorted_seq_lengths, desorted_indices
+
 
 class CosineWarmupScheduler(optim.lr_scheduler._LRScheduler):
     def __init__(self, optimizer, warmup, max_iters):
@@ -67,24 +82,22 @@ class LstmPredictor(pl.LightningModule):
 
     def forward(self, x, lengths=None):
         """
-            x: [batch_size, max_seq_len, input_size]，已经padding的输入序列
+            x: [batch_size, max_seq_len]输入序列
             lengths: [batch_size]，每个样本的实际长度
         
             返回:
             logits: 分类的logits
         """
-        x = self.input_net(x)   #[batch_size, max_seq_len, input_size]，已经padding的输入序列
-        packed_input = pack_padded_sequence(x, lengths, batch_first=True, enforce_sorted=False)
-        
-        # 通过LSTM hidden: num_layers * num_directions, batch, hidden_size
-        packed_output, (hidden, cell) = self.lstm(x)
-        # 取最后一个有效时间步的隐藏状态作为整个序列的表示
-        # 注意：对于双向LSTM，hidden将是(num_layers * num_directions, batch, hidden_size)，需要进一步处理
-        hidden = torch.transpose(hidden, 0, 1).contiguous()
-        hidden = hidden.view(hidden.shape[0], -1)
-        # 通过全连接层得到分类结果
-        logits = self.output_net(hidden)
-        
+        text, sorted_seq_lengths, desorted_indices = prepare_pack_padded_sequence(x, lengths)
+        embedded = self.input_net(text)
+        packed_embedded = pack_padded_sequence(embedded, sorted_seq_lengths, batch_first=True, enforce_sorted=False)
+        packed_output, (hidden, cell) = self.lstm(packed_embedded)
+        output, output_lengths = pad_packed_sequence(packed_output, batch_first=True)
+        output = output[desorted_indices]
+        batch_size, max_seq_len, hidden_dim = output.shape
+        hidden = torch.mean(torch.reshape(hidden,[batch_size,-1,hidden_dim]),dim=1)
+        output = torch.sum(output,dim=1)
+        logits = self.output_net(output + hidden)
         return logits
     
     def configure_optimizers(self):
@@ -173,11 +186,11 @@ def training(train_loader, val_loader, **kwargs):
 if __name__ == "__main__":
 
     try:
-        train_dataset = SCDataset("/home/zhulin/datasets/cdatasets_train.txt")
-        validate_dataset = SCDataset("/home/zhulin/datasets/cdatasets_val.txt")
+        # train_dataset = SCDataset("/home/zhulin/datasets/cdatasets_train.txt")
+        # validate_dataset = SCDataset("/home/zhulin/datasets/cdatasets_val.txt")
         # test_dataset = SCDataset("/home/zhulin/datasets/cdatasets_test.txt")
-
-        full_dataset = ConcatDataset([train_dataset, validate_dataset])
+        full_dataset = ScDataset("E:/datasets/sun/cdatasets_train.json")
+        # full_dataset = ConcatDataset([train_dataset, validate_dataset])
         train_size = int(0.6 * len(full_dataset))
         val_size = int(0.2 * len(full_dataset))
         test_size = len(full_dataset) - train_size - val_size

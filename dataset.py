@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from loguru import logger
@@ -32,11 +33,34 @@ class SCDataset(Dataset):
     def get_labels(self):
         return self.labels
 
-PRETRAIN_PATH = "/home/zhulin/pretrain/"
+class ScDataset(Dataset):
+    def __init__(self, path):
+        self.data, self.labels = [], []
+        with open(path, 'r') as f:
+            cnt: int = 0
+            for line in f.readlines():
+                result = json.loads(line)
+                self.data.append(result["channel"])
+                self.labels.append(result["label"])
+                cnt += 1
+                if cnt > 2000:
+                    break
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx], self.labels[idx]
+    def get_labels(self):
+        return self.labels
+
+
+# PRETRAIN_PATH = "/home/zhulin/pretrain/"
+PRETRAIN_PATH = "E:/pretrain/"
 tokenizer = AutoTokenizer.from_pretrained(PRETRAIN_PATH + 'bert_pretrain_uncased/')
 def sc_collate_fn(batch_data):
-    data_length = [len(x[0]) for x in batch_data]
     sent_seq = [x[0] for x in batch_data]
+    data_length = torch.tensor([min(len(x[0]), 2048) for x in batch_data], dtype=torch.int32)
     labels = torch.tensor([x[1] for x in batch_data], dtype=torch.float32)
     padded_sent_seq = tokenizer(sent_seq, padding=True, truncation=True, max_length=2048, return_tensors="pt")
     return padded_sent_seq["input_ids"], padded_sent_seq["attention_mask"], data_length, labels
@@ -89,7 +113,7 @@ if __name__ == "__main__":
     try:
         # datasets = KellectDataset("")
         
-        datasets = SCDataset("/mnt/sdd1/data/sun/cdatasets.txt", tokenizer)
+        datasets = ScDataset("E:/datasets/sun/cdatasets_train.json")
         train_loader = DataLoader(datasets, batch_size=128, shuffle=False, collate_fn=sc_collate_fn)
         for batch in train_loader:
             print(batch)
