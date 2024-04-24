@@ -55,14 +55,13 @@ class ScDataset(Dataset):
         return self.labels
 
 
-# PRETRAIN_PATH = "/home/zhulin/pretrain/"
-PRETRAIN_PATH = "E:/pretrain/"
+PRETRAIN_PATH = "/home/zhulin/pretrain/"
 tokenizer = AutoTokenizer.from_pretrained(PRETRAIN_PATH + 'bert_pretrain_uncased/')
 def sc_collate_fn(batch_data):
     sent_seq = [x[0] for x in batch_data]
-    data_length = torch.tensor([min(len(x[0]), 2048) for x in batch_data], dtype=torch.int32)
     labels = torch.tensor([x[1] for x in batch_data], dtype=torch.float32)
     padded_sent_seq = tokenizer(sent_seq, padding=True, truncation=True, max_length=2048, return_tensors="pt")
+    data_length = torch.tensor([sum(mask) for mask in padded_sent_seq["attention_mask"]])
     return padded_sent_seq["input_ids"], padded_sent_seq["attention_mask"], data_length, labels
 
 
@@ -113,10 +112,10 @@ if __name__ == "__main__":
     try:
         # datasets = KellectDataset("")
         
-        datasets = ScDataset("E:/datasets/sun/cdatasets_train.json")
-        train_loader = DataLoader(datasets, batch_size=128, shuffle=False, collate_fn=sc_collate_fn)
+        train_dataset = SCDataset("/home/zhulin/datasets/cdatasets_train.txt")
+        train_loader = DataLoader(train_dataset, batch_size=128, shuffle=False, collate_fn=sc_collate_fn)
         for batch in train_loader:
-            print(batch)
+            inp_data, _, lengths, labels = batch
             break
     except Exception as e:
         logger.exception(e)

@@ -11,11 +11,13 @@ from torch.utils.data import ConcatDataset, DataLoader, random_split
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import lightning as pl
 from lightning.pytorch.callbacks import ModelCheckpoint, StochasticWeightAveraging
+
+from tools import Notice
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
 
 from sampler import ImbalancedDatasetSampler
-from dataset import ScDataset, sc_collate_fn
+from dataset import SCDataset, ScDataset, sc_collate_fn
 
 seed = 6
 random.seed(seed)
@@ -76,7 +78,7 @@ class LstmPredictor(pl.LightningModule):
 
         self.output_net = nn.Sequential(
             nn.Dropout(self.hparams.dropout),
-            nn.Linear(self.hparams.model_dim * self.hparams.num_layers, self.hparams.num_classes),
+            nn.Linear(self.hparams.model_dim, self.hparams.num_classes),
             nn.Sigmoid()
         )
 
@@ -90,7 +92,8 @@ class LstmPredictor(pl.LightningModule):
         """
         text, sorted_seq_lengths, desorted_indices = prepare_pack_padded_sequence(x, lengths)
         embedded = self.input_net(text)
-        packed_embedded = pack_padded_sequence(embedded, sorted_seq_lengths, batch_first=True, enforce_sorted=False)
+        sorted_seq_lengths = sorted_seq_lengths.cpu()
+        packed_embedded = pack_padded_sequence(embedded, sorted_seq_lengths, batch_first=True)
         packed_output, (hidden, cell) = self.lstm(packed_embedded)
         output, output_lengths = pad_packed_sequence(packed_output, batch_first=True)
         output = output[desorted_indices]
@@ -186,11 +189,11 @@ def training(train_loader, val_loader, **kwargs):
 if __name__ == "__main__":
 
     try:
-        # train_dataset = SCDataset("/home/zhulin/datasets/cdatasets_train.txt")
-        # validate_dataset = SCDataset("/home/zhulin/datasets/cdatasets_val.txt")
+        train_dataset = SCDataset("/home/zhulin/datasets/cdatasets_train.txt")
+        validate_dataset = SCDataset("/home/zhulin/datasets/cdatasets_val.txt")
         # test_dataset = SCDataset("/home/zhulin/datasets/cdatasets_test.txt")
-        full_dataset = ScDataset("E:/datasets/sun/cdatasets_train.json")
-        # full_dataset = ConcatDataset([train_dataset, validate_dataset])
+  
+        full_dataset = ConcatDataset([train_dataset, validate_dataset])
         train_size = int(0.6 * len(full_dataset))
         val_size = int(0.2 * len(full_dataset))
         test_size = len(full_dataset) - train_size - val_size
@@ -205,17 +208,17 @@ if __name__ == "__main__":
         model = training(
             train_loader, val_loader,
             vocab_size = 30522,
-            input_dim=64,
-            model_dim=32,
+            input_dim=128,
+            model_dim=64,
             num_classes=1,
-            num_layers=32,
+            num_layers=8,
             dropout=0.5,
             input_dropout=0.2,
-            lr=1e-5,
+            lr=1e-6,
             warmup=50,
-            weight_decay=1e-4
+            weight_decay=0.0
         )
 
     except Exception as e:
         logger.exception(e)
-    # Notice().send("[+] Training finished!")
+    Notice().send("[+] Training finished!")
