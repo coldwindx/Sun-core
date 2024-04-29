@@ -37,14 +37,10 @@ class ScDataset(Dataset):
     def __init__(self, path):
         self.data, self.labels = [], []
         with open(path, 'r') as f:
-            cnt: int = 0
             for line in f.readlines():
                 result = json.loads(line)
                 self.data.append(result["channel"])
                 self.labels.append(result["label"])
-                cnt += 1
-                if cnt > 2000:
-                    break
 
     def __len__(self):
         return len(self.data)

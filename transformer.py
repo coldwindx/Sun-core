@@ -16,7 +16,7 @@ sys.path.append(__PATH__)
 
 from sampler import ImbalancedDatasetSampler
 from tools import Notice
-from dataset import SCDataset, sc_collate_fn
+from dataset import ScDataset, sc_collate_fn
 from network import MaskedMeanPooling
 
 seed = 6
@@ -294,7 +294,7 @@ def training(train_loader, val_loader, **kwargs):
         model = ScPredictor.load_from_checkpoint(pretrained_filename)
     else:
         model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
-        CKPT_PATH = "/home/zhulin/workspace/Sun-core/ckpt/ScPredicTask/lightning_logs/version_3/checkpoints/epoch=37-step=47500.ckpt"
+        CKPT_PATH = "/home/zhulin/workspace/Sun-core/ckpt/ScPredicTask/lightning_logs/version_5/checkpoints/epoch=16-step=21250.ckpt"
         trainer.fit(model, train_loader, val_loader, ckpt_path=CKPT_PATH)
 
     return model
@@ -302,9 +302,9 @@ def training(train_loader, val_loader, **kwargs):
 if __name__ == "__main__":
 
     try:
-        train_dataset = SCDataset("/home/zhulin/datasets/cdatasets_train.txt")
-        validate_dataset = SCDataset("/home/zhulin/datasets/cdatasets_val.txt")
-        # test_dataset = SCDataset("/home/zhulin/datasets/cdatasets_test.txt")
+        train_dataset = ScDataset("/home/zhulin/datasets/cdatasets_train.2.json")
+        validate_dataset = ScDataset("/home/zhulin/datasets/cdatasets_val.2.json")
+        # test_dataset = SCDataset("/home/zhulin/datasets/cdatasets_test.2.json")
 
         full_dataset = ConcatDataset([train_dataset, validate_dataset])
         train_size = int(0.6 * len(full_dataset))
