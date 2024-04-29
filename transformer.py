@@ -1,3 +1,4 @@
+import argparse
 import math
 import os
 import random
@@ -263,12 +264,10 @@ class ScPredictor(TransformerPredictor):
         preds = self.forward(inp_data, mask=mask, add_positional_encoding=True)
         preds = preds.reshape(labels.shape)
         return preds
-    
-CHECKPOINT_PATH = "/home/zhulin/workspace/Sun-core/ckpt"
 
-def training(train_loader, val_loader, **kwargs):
+def training(train_loader, val_loader, checkpoint, **kwargs):
     torch.set_float32_matmul_precision(precision="high")
-    root_dir = os.path.join(CHECKPOINT_PATH, "ScPredicTask")
+    root_dir = os.path.join(checkpoint, "ScPredicTask")
     os.makedirs(root_dir, exist_ok=True)
     trainer = pl.Trainer(
         default_root_dir=root_dir,
@@ -288,23 +287,27 @@ def training(train_loader, val_loader, **kwargs):
     )
     trainer.logger._default_hp_metric = None
 
-    pretrained_filename = os.path.join(CHECKPOINT_PATH, "ScPredicTask.ckpt")
+    pretrained_filename = os.path.join(checkpoint, "ScPredicTask.ckpt")
     if os.path.isfile(pretrained_filename):
         print("Found pretrained mode, loading...")
         model = ScPredictor.load_from_checkpoint(pretrained_filename)
     else:
         model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
-        CKPT_PATH = "/home/zhulin/workspace/Sun-core/ckpt/ScPredicTask/lightning_logs/version_5/checkpoints/epoch=16-step=21250.ckpt"
-        trainer.fit(model, train_loader, val_loader, ckpt_path=CKPT_PATH)
+        trainer.fit(model, train_loader, val_loader)
 
     return model
 
 if __name__ == "__main__":
 
     try:
-        train_dataset = ScDataset("/home/zhulin/datasets/cdatasets_train.2.json")
-        validate_dataset = ScDataset("/home/zhulin/datasets/cdatasets_val.2.json")
-        # test_dataset = SCDataset("/home/zhulin/datasets/cdatasets_test.2.json")
+        parser = argparse.ArgumentParser(description='This is transformer train/test module.')
+        parser.add_argument('datasets', type=int, help='Path of datasets')
+        parser.add_argument('checkpoint', type=int, help='Path of checkpoint')
+        args = parser.parse_args()
+
+        train_dataset = ScDataset(args.datasets + "cdatasets_train.2.json")
+        validate_dataset = ScDataset(args.datasets + "cdatasets_val.2.json")
+        test_dataset = ScDataset(args.datasets + "cdatasets_test.2.json")
 
         full_dataset = ConcatDataset([train_dataset, validate_dataset])
         train_size = int(0.6 * len(full_dataset))
@@ -312,14 +315,14 @@ if __name__ == "__main__":
         test_size = len(full_dataset) - train_size - val_size
         train_dataset, val_dataset, test_dataset = random_split(full_dataset, [train_size, val_size, test_size])
 
-        # train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, collate_fn=sc_collate_fn, num_workers=4)
         sampler = ImbalancedDatasetSampler(train_dataset)
         train_loader = DataLoader(train_dataset, batch_size=32, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
-        
         val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
         model = training(
-            train_loader, val_loader,
+            train_loader, 
+            val_loader,
+            args.checkpoint,
             vocab_size = 30522,
             input_dim=64,
             model_dim=32,
