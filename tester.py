@@ -40,7 +40,7 @@ def test(ckpt):
     trainer = pl.Trainer(enable_checkpointing=False, logger=False)
     
     TEST_DATASETS_PATH = "/home/zhulin/datasets/cdatasets_test.txt"
-    test_dataset = SCDataset(TEST_DATASETS_PATH)
+    test_dataset = ScDataset(TEST_DATASETS_PATH)
     test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
     ckpt = f"epoch=74-step=46875.ckpt"

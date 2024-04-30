@@ -5,6 +5,7 @@ import random
 import sys
 from loguru import logger
 import numpy as np
+from sklearn.metrics import confusion_matrix, accuracy_score, f1_score, precision_score, recall_score
 import torch
 import torch.nn as nn
 from torch import optim
@@ -18,7 +19,7 @@ sys.path.append(__PATH__)
 from sampler import ImbalancedDatasetSampler
 from tools import Notice
 from dataset import ScDataset, sc_collate_fn
-from network import MaskedMeanPooling
+from network import CosineWarmupScheduler, MaskedMeanPooling
 from tools import Config
 
 seed = 6
@@ -28,6 +29,7 @@ torch.manual_seed(seed)                    # 为CPU设置随机种子
 torch.cuda.manual_seed(seed)               # 为当前GPU设置随机种子
 torch.cuda.manual_seed_all(seed)           # 为所有GPU设置随机种子
 pl.seed_everything(seed, workers=True)
+torch.set_float32_matmul_precision(precision="high")
 CONFIG = Config()
 
 def scaled_dot_product(q, k, v, mask=None):
@@ -152,22 +154,6 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:, : x.size(1)]
         return x
 
-class CosineWarmupScheduler(optim.lr_scheduler._LRScheduler):
-    def __init__(self, optimizer, warmup, max_iters):
-        self.warmup = warmup
-        self.max_num_iters = max_iters
-        super().__init__(optimizer)
-    
-    def get_lr(self):
-        lr_factor = self.get_lr_factor(epoch=self.last_epoch)
-        return [base_lr * lr_factor for base_lr in self.base_lrs]
-    
-    def get_lr_factor(self, epoch):
-        lr_factor = 0.5 * (1 + np.cos(np.pi * epoch / self.max_num_iters))
-        if epoch <= self.warmup:
-            lr_factor *= epoch * 1.0 / self.warmup
-        return lr_factor
-    
 class TransformerPredictor(pl.LightningModule):
     def __init__(self, vocab_size, input_dim, model_dim, num_classes, num_heads, num_layers, lr, warmup, max_iters, dropout=0.0, input_dropout=0.0, weight_decay=0.0):
         super().__init__()
@@ -236,7 +222,6 @@ class TransformerPredictor(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         raise NotImplementedError
 
-
 class ScPredictor(TransformerPredictor):
     def _calculate_loss(self, batch, mode="train"):
         inp_data, mask, _, labels = batch
@@ -246,8 +231,8 @@ class ScPredictor(TransformerPredictor):
         loss = F.binary_cross_entropy(preds, labels)
         acc = ((preds >= 0.5) == labels).float().mean()
 
-        self.log("%s_loss" % mode, loss, on_epoch=True)
-        self.log("%s_acc" % mode, acc, on_epoch=True)
+        self.log("%s_loss" % mode, loss, on_epoch=True, enable_graph=True)
+        self.log("%s_acc" % mode, acc, on_epoch=True, enable_graph=True)
         return loss, acc
 
     def training_step(self, batch, batch_idx):
@@ -268,7 +253,6 @@ class ScPredictor(TransformerPredictor):
         return preds
 
 def training(train_loader, val_loader, checkpoint, **kwargs):
-    torch.set_float32_matmul_precision(precision="high")
     root_dir = os.path.join(checkpoint, "ScPredicTask")
     os.makedirs(root_dir, exist_ok=True)
     trainer = pl.Trainer(
@@ -289,19 +273,36 @@ def training(train_loader, val_loader, checkpoint, **kwargs):
     )
     trainer.logger._default_hp_metric = None
 
-    pretrained_filename = os.path.join(checkpoint, "ScPredicTask.ckpt")
-    if os.path.isfile(pretrained_filename):
-        print("Found pretrained mode, loading...")
-        model = ScPredictor.load_from_checkpoint(pretrained_filename)
-    else:
-        model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
-        trainer.fit(model, train_loader, val_loader)
+    model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
+    trainer.fit(model, train_loader, val_loader)
 
     return model
+
+def testing(test_loader, ckpt, **kwargs):
+    # load model
+    trainer = pl.Trainer(enable_checkpointing=False, logger=False)
+    pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + ckpt
+    print(pretrained_filename)
+    classifier = ScPredictor.load_from_checkpoint(pretrained_filename)
+    classifier.eval()
+
+    predictions = trainer.predict(classifier, dataloaders=test_loader)
+    predictions = torch.cat(predictions, dim=0)
+    y_hat = [1 if i >= 0.5 else 0 for i in predictions]
+    labels = test_dataset.get_labels()
+    
+    tn, fp, fn, tp = confusion_matrix(labels, y_hat).ravel()
+    accuracy, precision, recall, f1 = accuracy_score(labels, y_hat), precision_score(labels, y_hat), recall_score(labels, y_hat), f1_score(labels, y_hat)
+    fpr = fp / (fp + tn + 1e-19)
+    print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {accuracy}\npre: {precision}\nrec: {recall}\nfpr: {fpr}\nauc: {f1}")
 
 if __name__ == "__main__":
 
     try:
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--mode', default='train', type=str)
+        args = parser.parse_args()
+
         train_dataset = ScDataset(CONFIG["datasets"]["train"])
         validate_dataset = ScDataset(CONFIG["datasets"]["validate"])
         test_dataset = ScDataset(CONFIG["datasets"]["test"])
@@ -315,24 +316,27 @@ if __name__ == "__main__":
         sampler = ImbalancedDatasetSampler(train_dataset)
         train_loader = DataLoader(train_dataset, batch_size=32, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
         val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+        test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
-        model = training(
-            train_loader, 
-            val_loader,
-            CONFIG["checkpoint"]["ScPredicTask"],
-            vocab_size = 30522,
-            input_dim=64,
-            model_dim=32,
-            num_heads=8,
-            num_classes=1,
-            num_layers=1,
-            dropout=0.5,
-            input_dropout=0.2,
-            lr=1e-5,
-            warmup=50,
-            weight_decay=1e-4
-        )
-
+        if args.mode == "train":
+            model = training(
+                train_loader, 
+                val_loader,
+                CONFIG["checkpoint"]["path"],
+                vocab_size = 30522,
+                input_dim=64,
+                model_dim=32,
+                num_heads=8,
+                num_classes=1,
+                num_layers=1,
+                dropout=0.5,
+                input_dropout=0.2,
+                lr=1e-5,
+                warmup=50,
+                weight_decay=1e-4
+            )
+        if args.mode == "test":
+            testing(test_loader, CONFIG["checkpoint"]["ScPredicTask"])
     except Exception as e:
         logger.exception(e)
     Notice().send("[+] Training finished!")
