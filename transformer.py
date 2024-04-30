@@ -19,6 +19,7 @@ from sampler import ImbalancedDatasetSampler
 from tools import Notice
 from dataset import ScDataset, sc_collate_fn
 from network import MaskedMeanPooling
+from tools import Config
 
 seed = 6
 random.seed(seed)
@@ -27,6 +28,7 @@ torch.manual_seed(seed)                    # 为CPU设置随机种子
 torch.cuda.manual_seed(seed)               # 为当前GPU设置随机种子
 torch.cuda.manual_seed_all(seed)           # 为所有GPU设置随机种子
 pl.seed_everything(seed, workers=True)
+CONFIG = Config()
 
 def scaled_dot_product(q, k, v, mask=None):
     '''
@@ -300,14 +302,9 @@ def training(train_loader, val_loader, checkpoint, **kwargs):
 if __name__ == "__main__":
 
     try:
-        parser = argparse.ArgumentParser(description='This is transformer train/test module.')
-        parser.add_argument('datasets', type=int, help='Path of datasets')
-        parser.add_argument('checkpoint', type=int, help='Path of checkpoint')
-        args = parser.parse_args()
-
-        train_dataset = ScDataset(args.datasets + "cdatasets_train.2.json")
-        validate_dataset = ScDataset(args.datasets + "cdatasets_val.2.json")
-        test_dataset = ScDataset(args.datasets + "cdatasets_test.2.json")
+        train_dataset = ScDataset(CONFIG["datasets"]["train"])
+        validate_dataset = ScDataset(CONFIG["datasets"]["validate"])
+        test_dataset = ScDataset(CONFIG["datasets"]["test"])
 
         full_dataset = ConcatDataset([train_dataset, validate_dataset])
         train_size = int(0.6 * len(full_dataset))
@@ -322,7 +319,7 @@ if __name__ == "__main__":
         model = training(
             train_loader, 
             val_loader,
-            args.checkpoint,
+            CONFIG["checkpoint"]["ScPredicTask"],
             vocab_size = 30522,
             input_dim=64,
             model_dim=32,

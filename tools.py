@@ -13,14 +13,31 @@ import yaml
 
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 sys.path.append(__PATH__)  
-with open("config.yml", "r") as config_open:
-    config_data = yaml.safe_load(config_open)["settings"]
+
+# ---------------------- 单例模式 -------------------------- #
+def singleton(cls):
+    _instance = {}
+
+    def inner(*args, **kargs):
+        if cls not in _instance:
+            _instance[cls] = cls(*args, **kargs)
+        return _instance[cls]
+    return inner
+
+# ---------------------- 配置信息 -------------------------- #
+@singleton
+class Config:
+    def __init__(self) -> None:
+        with open("config.yml", "r") as config_open:
+            self.data = yaml.safe_load(config_open)
+    def __getitem__(self, name):
+        return self.data[name]
 # ---------------------- 全局变量 -------------------------- #
 # 校园网账号密码
-USERNAME = config_data["network"]["username"]
-PASSWORD = config_data["network"]["password"]
-WX_TOKEN = config_data["network"]["wx_token"]
-
+config = Config()
+USERNAME = config["network"]["username"]
+PASSWORD = config["network"]["password"]
+WX_TOKEN = config["network"]["wx_token"]
 # ---------------------- 微信通知 -------------------------- #
 class Notice:
     # 校园网网关登录地址 或换成"http://gw.bupt.edu.cn/login"
@@ -93,18 +110,6 @@ class Timer:
 
     def clear(self):
         self.times.clear()
-
-# ---------------------- 单例模式 -------------------------- #
-
-
-def singleton(cls):
-    _instance = {}
-
-    def inner():
-        if cls not in _instance:
-            _instance[cls] = cls()
-        return _instance[cls]
-    return inner
 
 # ---------------------- 绘制图像 -------------------------- #
 

@@ -3,35 +3,15 @@ import os
 import sys
 from loguru import logger
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
+from tools import Config
 
-class SCDataset(Dataset):
-    def __init__(self, path):
-        self.data, self.labels = [], []
-        with open(path, 'r') as f:
-            cnt: int = 0
-            for line in f:
-                cnt += 1
-                if cnt % 2 == 1:
-                    # 第一行: [索引 UniqueKey PID 标签]
-                    line = line.split("\t")[-1]
-                    self.labels.append(int(line, base=10))
-                    continue
-                if cnt % 2 == 0:
-                    self.data.append(line)
-                    continue
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        return self.data[idx], self.labels[idx]
-    def get_labels(self):
-        return self.labels
+config = Config()
+tokenizer = AutoTokenizer.from_pretrained(config["pretrain"]["bert_pretrain_uncased"])
 
 class ScDataset(Dataset):
     def __init__(self, path):
@@ -50,9 +30,6 @@ class ScDataset(Dataset):
     def get_labels(self):
         return self.labels
 
-
-PRETRAIN_PATH = "/home/zhulin/pretrain/"
-tokenizer = AutoTokenizer.from_pretrained(PRETRAIN_PATH + 'bert_pretrain_uncased/')
 def sc_collate_fn(batch_data):
     sent_seq = [x[0] for x in batch_data]
     labels = torch.tensor([x[1] for x in batch_data], dtype=torch.float32)
@@ -106,13 +83,7 @@ def mc_collate_fn(batch_data):
 if __name__ == "__main__":
     
     try:
-        # datasets = KellectDataset("")
-        
-        train_dataset = SCDataset("/home/zhulin/datasets/cdatasets_train.txt")
-        train_loader = DataLoader(train_dataset, batch_size=128, shuffle=False, collate_fn=sc_collate_fn)
-        for batch in train_loader:
-            inp_data, _, lengths, labels = batch
-            break
+        pass
     except Exception as e:
         logger.exception(e)
     # Notice().send("[+] Datasets generating finished!\n")
