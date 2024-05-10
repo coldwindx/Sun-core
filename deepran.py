@@ -1,4 +1,4 @@
-import math
+import argparse
 import os
 import random
 import sys
@@ -10,15 +10,14 @@ from torch import optim
 import torch.nn.functional as F
 from torch.utils.data import ConcatDataset, DataLoader, random_split
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from sklearn.metrics import confusion_matrix, accuracy_score, f1_score, precision_score, recall_score
 import lightning as pl
-from lightning.pytorch.callbacks import ModelCheckpoint, StochasticWeightAveraging
+from lightning.pytorch.callbacks import ModelCheckpoint
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
 
 from sampler import ImbalancedDatasetSampler
-from tools import Notice
 from dataset import ScDataset, sc_collate_fn
-from network import MaskedMeanPooling
 from tools import Config
 
 seed = 6
@@ -28,6 +27,7 @@ torch.manual_seed(seed)                    # 为CPU设置随机种子
 torch.cuda.manual_seed(seed)               # 为当前GPU设置随机种子
 torch.cuda.manual_seed_all(seed)           # 为所有GPU设置随机种子
 pl.seed_everything(seed, workers=True)
+torch.set_float32_matmul_precision(precision="high")
 CONFIG = Config()
 
 def prepare_pack_padded_sequence(inputs_words, seq_lengths, descending=True):
@@ -44,8 +44,7 @@ def prepare_pack_padded_sequence(inputs_words, seq_lengths, descending=True):
     sorted_inputs_words = inputs_words[indices]
     return sorted_inputs_words, sorted_seq_lengths, desorted_indices
 
-
-class DeepRan(pl.LightningModule):
+class BiLstm(pl.LightningModule):
     def __init__(self, vocab_size, input_dim, model_dim, num_classes, num_layers, lr, warmup, max_iters, dropout=0.0, input_dropout=0.0, weight_decay=0.0):
         super().__init__()
         self.save_hyperparameters()
@@ -111,7 +110,73 @@ class DeepRan(pl.LightningModule):
     
     def optimizer_step(self, *args, **kwargs):
         super().optimizer_step(*args, **kwargs)
-        self.lr_scheduler.step()
+        # self.lr_scheduler.step()
+    
+    def training_step(self, batch, batch_idx):
+        raise NotImplementedError
+    def validation_step(self, batch, batch_idx):
+        raise NotImplementedError
+    def test_step(self, batch, batch_idx):
+        raise NotImplementedError
+
+class DeepRan(pl.LightningModule):
+    def __init__(self, vocab_size, input_dim, model_dim, num_classes, num_layers, lr, warmup, max_iters, dropout=0.0, input_dropout=0.0, weight_decay=0.0):
+        super().__init__()
+        self.save_hyperparameters()
+        self._create_model()
+
+    def _create_model(self):
+        # Input dim -> Model dim
+        self.input_net = nn.Sequential(
+            nn.Embedding(self.hparams.vocab_size, self.hparams.input_dim),
+            nn.Dropout(self.hparams.input_dropout), 
+            nn.Linear(self.hparams.input_dim, self.hparams.model_dim)
+        )
+
+        # BiLstm
+        self.lstm = nn.LSTM(
+            input_size=self.hparams.model_dim,
+            hidden_size=self.hparams.model_dim,
+            num_layers=self.hparams.num_layers,
+            bidirectional=True,
+            batch_first=True,
+            dropout=self.hparams.dropout
+        )
+        # Output classifier per sequence lement
+        self.tanh = nn.Tanh()
+        self.w = nn.Parameter(torch.randn(self.hparams.num_layers * 2, self.hparams.model_dim), requires_grad=True)
+        self.fc = nn.Sequential(
+            nn.Dropout(self.hparams.dropout, inplace=True),
+            nn.Linear(self.hparams.num_layers * 2, self.hparams.num_classes),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x, lengths=None):
+        """
+        Args:
+            x: Input features of shape [Batch, SeqLen, input_dim]
+            mask: Mask to apply on the attention outputs (optional)
+            add_positional_encoding: If True, we add the positional encoding to the input.
+                                      Might not be desired for some tasks.
+        """
+        text, sorted_seq_lengths, desorted_indices = prepare_pack_padded_sequence(x, lengths)
+        embedded = self.input_net(text)
+        sorted_seq_lengths = sorted_seq_lengths.cpu()
+        packed_embedded = pack_padded_sequence(embedded, sorted_seq_lengths, batch_first=True)
+        packed_output, (hidden, cell) = self.lstm(packed_embedded)
+
+        alpha = torch.sum(torch.mul(self.w, hidden.permute(1, 0, 2)), dim=2)
+        logits = self.fc(alpha)
+        return logits
+
+    
+    def configure_optimizers(self):
+        optimizer = optim.Adam(self.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weight_decay)
+        return optimizer
+    
+    def optimizer_step(self, *args, **kwargs):
+        super().optimizer_step(*args, **kwargs)
+        # self.lr_scheduler.step()
     
     def training_step(self, batch, batch_idx):
         raise NotImplementedError
@@ -123,8 +188,8 @@ class DeepRan(pl.LightningModule):
 
 class DeepRanPredictor(DeepRan):
     def _calculate_loss(self, batch, mode="train"):
-        inp_data, mask, _, labels = batch
-        preds = self.forward(inp_data, mask=mask, add_positional_encoding=True)
+        inp_data, _, lengths, labels = batch
+        preds = self.forward(inp_data, lengths=lengths)
         preds = preds.reshape(labels.shape)
 
         loss = F.binary_cross_entropy(preds, labels)
@@ -146,13 +211,12 @@ class DeepRanPredictor(DeepRan):
         return loss
     def predict_step(self, batch, batch_idx):
         # padded_sent_seq["input_ids"], padded_sent_seq["attention_mask"], data_length, labels
-        inp_data, mask, _, labels = batch
-        preds = self.forward(inp_data, mask=mask, add_positional_encoding=True)
+        inp_data, _, lengths, labels = batch
+        preds = self.forward(inp_data, lengths=lengths)
         preds = preds.reshape(labels.shape)
         return preds
 
 def training(train_loader, val_loader, checkpoint, **kwargs):
-    torch.set_float32_matmul_precision(precision="high")
     root_dir = os.path.join(checkpoint, "ScDeepRanTask")
     os.makedirs(root_dir, exist_ok=True)
     trainer = pl.Trainer(
@@ -178,9 +242,31 @@ def training(train_loader, val_loader, checkpoint, **kwargs):
 
     return model
 
+def testing(test_loader, ckpt, **kwargs):
+    # load model
+    trainer = pl.Trainer(enable_checkpointing=False, logger=False)
+    pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + ckpt
+    print(pretrained_filename)
+    classifier = DeepRanPredictor.load_from_checkpoint(pretrained_filename)
+    classifier.eval()
+
+    predictions = trainer.predict(classifier, dataloaders=test_loader)
+    predictions = torch.cat(predictions, dim=0)
+    y_hat = [1 if i >= 0.5 else 0 for i in predictions]
+    labels = test_dataset.get_labels()
+    
+    tn, fp, fn, tp = confusion_matrix(labels, y_hat).ravel()
+    accuracy, precision, recall, f1 = accuracy_score(labels, y_hat), precision_score(labels, y_hat), recall_score(labels, y_hat), f1_score(labels, y_hat)
+    fpr = fp / (fp + tn + 1e-19)
+    print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {accuracy}\npre: {precision}\nrec: {recall}\nfpr: {fpr}\nauc: {f1}")
+
 if __name__ == "__main__":
 
     try:
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--mode', default='train', type=str)
+        args = parser.parse_args()
+
         train_dataset = ScDataset(CONFIG["datasets"]["train"])
         validate_dataset = ScDataset(CONFIG["datasets"]["validate"])
         test_dataset = ScDataset(CONFIG["datasets"]["test"])
@@ -192,25 +278,30 @@ if __name__ == "__main__":
         train_dataset, val_dataset, test_dataset = random_split(full_dataset, [train_size, val_size, test_size])
 
         sampler = ImbalancedDatasetSampler(train_dataset)
-        train_loader = DataLoader(train_dataset, batch_size=32, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
-        val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+        train_loader = DataLoader(train_dataset, batch_size=128, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
+        val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+        test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
-        model = training(
-            train_loader, 
-            val_loader,
-            CONFIG["checkpoint"]["ScDeepRanTask"],
-            vocab_size = 30522,
-            input_dim=256,
-            model_dim=128,
-            num_classes=1,
-            num_layers=8,
-            dropout=0.5,
-            input_dropout=0.2,
-            lr=1e-6,
-            warmup=50,
-            weight_decay=0.0
-        )
+        if args.mode == "train":
+            model = training(
+                train_loader, 
+                val_loader,
+                CONFIG["checkpoint"]["path"],
+                vocab_size = 30522,
+                input_dim=256,
+                model_dim=128,
+                num_classes=1,
+                num_layers=8,
+                dropout=0.5,
+                input_dropout=0.2,
+                lr=1e-6,
+                warmup=50,
+                weight_decay=0.0
+            )
+        if args.mode == "test":
+            testing(test_loader, CONFIG["checkpoint"]["ScDeepRanTask"])
+
 
     except Exception as e:
         logger.exception(e)
-    Notice().send("[+] Training finished!")
+    # Notice().send("[+] Training finished!")

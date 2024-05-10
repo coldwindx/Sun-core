@@ -83,7 +83,7 @@ def mc_collate_fn(batch_data):
 if __name__ == "__main__":
     
     try:
-        pass
+        torch.jit.script(tokenizer)
     except Exception as e:
         logger.exception(e)
     # Notice().send("[+] Datasets generating finished!\n")

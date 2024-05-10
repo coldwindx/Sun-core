@@ -282,7 +282,6 @@ def testing(test_loader, ckpt, **kwargs):
     # load model
     trainer = pl.Trainer(enable_checkpointing=False, logger=False)
     pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + ckpt
-    print(pretrained_filename)
     classifier = ScPredictor.load_from_checkpoint(pretrained_filename)
     classifier.eval()
 
