@@ -18,7 +18,7 @@ sys.path.append(__PATH__)
 
 from sampler import ImbalancedDatasetSampler
 from dataset import ScDataset, sc_collate_fn
-from tools import Config
+from tools import Config, Notice
 
 seed = 6
 random.seed(seed)
@@ -304,4 +304,4 @@ if __name__ == "__main__":
 
     except Exception as e:
         logger.exception(e)
-    # Notice().send("[+] Training finished!")
+    Notice().send("[+] Training finished!")

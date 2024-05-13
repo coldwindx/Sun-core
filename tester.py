@@ -100,15 +100,15 @@ def test(ckpt):
 def main(ckpt):
     torch.set_float32_matmul_precision(precision="high")
     # load model
-    CHECKPOINT_PATH = "/home/zhulin/workspace/Sun-core/ckpt/ScPredicTask/lightning_logs/version_5/checkpoints/"
+    CHECKPOINT_PATH = "/home/zhulin/workspace/Sun-core/ckpt/ScPredicTask/lightning_logs/version_7/checkpoints/"
 
     trainer = pl.Trainer(enable_checkpointing=False, logger=False)
     
-    TEST_DATASETS_PATH = "/home/zhulin/datasets/cdatasets_test.2.json"
+    TEST_DATASETS_PATH = "/home/zhulin/datasets/cdatasets_test.3.json"
     test_dataset = ScDataset(TEST_DATASETS_PATH)
     test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
-    ckpt = f"epoch=16-step=21250.ckpt"
+    ckpt = f"epoch=15-step=20000.ckpt"
     pretrained_filename = os.path.join(CHECKPOINT_PATH, ckpt)
     classifier = ScPredictor.load_from_checkpoint(pretrained_filename)
     classifier.eval()
@@ -129,7 +129,7 @@ def main(ckpt):
     fprv = fpr(tp, tn, fp, fn)
     auc = 2 * pre * rec / (pre + rec)
     print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {acc}\npre: {pre}\nrec: {rec}\nfpr: {fprv}\nauc: {auc}")
-
+    exit(0)
 
     samples = collections.defaultdict(list)
     pkeys = []

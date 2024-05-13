@@ -201,7 +201,7 @@ class TransformerPredictor(pl.LightningModule):
         x = self.input_net(x)
         if add_positional_encoding:
             x = self.positional_encoding(x)
-        x = self.transformer(x, mask=mask)  # [Batch, SeqLen, ModDim]
+        x = self.transformer(x, mask=mask)          # [Batch, SeqLen, ModDim]
         x = self.pooling_net(x, mask=mask)            # GlobalAveragePooling
         x = self.output_net(x)
         return x
@@ -264,7 +264,7 @@ def training(train_loader, val_loader, checkpoint, **kwargs):
         accelerator="auto",
         # precision="bf16-true",
         devices=1,
-        max_epochs=80,
+        max_epochs=40,
         accumulate_grad_batches=4,
         # gradient_clip_val=10,
         limit_train_batches= 5000, 
