@@ -238,14 +238,15 @@ def training(train_loader, val_loader, checkpoint, **kwargs):
     trainer.logger._default_hp_metric = None
 
     model = DeepRanPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
-    trainer.fit(model, train_loader, val_loader)
+    pretrained_filename = CONFIG["checkpoint"]["path"] + "ScDeepRanTask/lightning_logs" + CONFIG["checkpoint"]["ScDeepRanTask"]
+    trainer.fit(model, train_loader, val_loader, ckpt_path=pretrained_filename)
 
     return model
 
 def testing(test_loader, ckpt, **kwargs):
     # load model
     trainer = pl.Trainer(enable_checkpointing=False, logger=False)
-    pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + ckpt
+    pretrained_filename = CONFIG["checkpoint"]["path"] + "ScDeepRanTask/lightning_logs" + ckpt
     print(pretrained_filename)
     classifier = DeepRanPredictor.load_from_checkpoint(pretrained_filename)
     classifier.eval()
