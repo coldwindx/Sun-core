@@ -152,8 +152,8 @@ if __name__ == "__main__":
         train_dataset = ScDataset(CONFIG["datasets"]["train"])
         validate_dataset = ScDataset(CONFIG["datasets"]["validate"])
         # test_dataset = ScDataset(CONFIG["datasets"]["test"])
-        trainz_dataset = ScDataset(CONFIG["datasets"]["train"])
-        # testz_dataset = ScDataset(CONFIG["datasets"]["test"])
+        trainz_dataset = ScDataset(CONFIG["datasets"]["trainz"])
+        # testz_dataset = ScDataset(CONFIG["datasets"]["testz"])
         full_dataset = ConcatDataset([train_dataset, validate_dataset, trainz_dataset])
 
         if args.mode == "tfidf":
@@ -166,7 +166,7 @@ if __name__ == "__main__":
         if args.mode == "train":
             training(train_dataset, val_dataset)
         if args.mode == "test":
-            test_dataset = ConcatDataset([ScDataset(CONFIG["datasets"]["test"]), ScDataset(CONFIG["datasets"]["test"])])
+            test_dataset = ConcatDataset([ScDataset(CONFIG["datasets"]["test"]), ScDataset(CONFIG["datasets"]["testz"])])
             testing(test_dataset)
     except Exception as e:
         logger.exception(e)
