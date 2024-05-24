@@ -269,7 +269,8 @@ def training(train_loader, val_loader, checkpoint, **kwargs):
         # gradient_clip_val=10,
         limit_train_batches= 5000, 
         # limit_val_batches=5000,
-        # enable_progress_bar=False
+        # enable_progress_bar=False,
+        enable_checkpointing=False
     )
     trainer.logger._default_hp_metric = None
 
@@ -304,9 +305,10 @@ if __name__ == "__main__":
 
         train_dataset = ScDataset(CONFIG["datasets"]["train"])
         validate_dataset = ScDataset(CONFIG["datasets"]["validate"])
-        test_dataset = ScDataset(CONFIG["datasets"]["test"])
+        trainz_dataset = ScDataset(CONFIG["datasets"]["train"])
+        full_dataset = ConcatDataset([train_dataset, validate_dataset, trainz_dataset])
 
-        full_dataset = ConcatDataset([train_dataset, validate_dataset])
+        full_dataset = ConcatDataset([train_dataset, validate_dataset, trainz_dataset])
         train_size = int(0.6 * len(full_dataset))
         val_size = int(0.2 * len(full_dataset))
         test_size = len(full_dataset) - train_size - val_size

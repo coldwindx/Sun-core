@@ -25,35 +25,15 @@ class AutoEncoder(nn.Module):
             nn.Linear(hidden_dim, input_dim)
         )
     def forward(self, x):
-        encoder = self.encoder(x)
-        decoder = self.decoder(encoder)
-        return encoder, decoder
+        z = self.encoder(x)
+        h = self.decoder(z)
+        return z, h
 
 class DeepGuardPredictor(pl.LightningModule):
-    def __init__(self, vocab_size, input_dim, model_dim, num_classes, num_heads, num_layers, lr, warmup, max_iters, dropout=0.0, input_dropout=0.0, weight_decay=0.0):
+    def __init__(self, vocab_size, input_dim, model_dim, output_dim, lr, warmup, max_iters, dropout=0.0, weight_decay=0.0):
         super().__init__()
         self.save_hyperparameters()
-        self._create_model()
-    def _create_model(self):
-        self.encoder = nn.Sequential(
-            nn.Linear(self.hparams.input_dim, self.hparams.model_dim),
-            nn.ReLU(),
-            nn.Dropout(self.hparams.dropout),
-            nn.Linear(self.hparams.model_dim, self.hparams.model_dim),
-            nn.ReLU(),
-            nn.Dropout(self.hparams.dropout),
-            nn.Linear(self.hparams.model_dim, self.hparams.model_dim),
-            nn.Dropout(self.hparams.dropout)
-        )
-        self.decoder = nn.Sequential(
-            nn.Linear(self.hparams.model_dim, self.hparams.model_dim),
-            nn.ReLU(),
-            nn.Dropout(self.hparams.dropout),
-            nn.Linear(self.hparams.model_dim, self.hparams.model_dim),
-            nn.ReLU(),
-            nn.Dropout(self.hparams.dropout),
-            nn.Linear(self.hparams.model_dim, self.hparams.input_dim)
-        )
+        self.autoencoder = AutoEncoder(self.hparams.input_dim, self.hparams.model_dim, self.hparams.output_dim, self.hparams.dropout)
     def forward(self, x):
         encoder = self.encoder(x)
         decoder = self.decoder(encoder)

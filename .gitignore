@@ -162,3 +162,5 @@ cython_debug/
 ckpt/
 config.yml
 *.out
+*.ckpt
+*.npy

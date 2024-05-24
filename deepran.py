@@ -10,12 +10,13 @@ from torch import optim
 import torch.nn.functional as F
 from torch.utils.data import ConcatDataset, DataLoader, random_split
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-from sklearn.metrics import confusion_matrix, accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import confusion_matrix
 import lightning as pl
 from lightning.pytorch.callbacks import ModelCheckpoint
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
 
+import metrics
 from sampler import ImbalancedDatasetSampler
 from dataset import ScDataset, sc_collate_fn
 from tools import Config, Notice
@@ -243,11 +244,11 @@ def training(train_loader, val_loader, checkpoint, **kwargs):
 
     return model
 
-def testing(test_loader, ckpt, **kwargs):
+def testing(test_loader, **kwargs):
     # load model
+    pretrained_filename = CONFIG["checkpoint"]["path"] + "ScDeepRanTask/lightning_logs" + CONFIG["checkpoint"]["ScDeepRanTask"]
+
     trainer = pl.Trainer(enable_checkpointing=False, logger=False)
-    pretrained_filename = CONFIG["checkpoint"]["path"] + "ScDeepRanTask/lightning_logs" + ckpt
-    print(pretrained_filename)
     classifier = DeepRanPredictor.load_from_checkpoint(pretrained_filename)
     classifier.eval()
 
@@ -257,10 +258,12 @@ def testing(test_loader, ckpt, **kwargs):
     labels = test_dataset.get_labels()
     
     tn, fp, fn, tp = confusion_matrix(labels, y_hat).ravel()
-    accuracy, precision, recall, f1 = accuracy_score(labels, y_hat), precision_score(labels, y_hat), recall_score(labels, y_hat), f1_score(labels, y_hat)
-    fpr = fp / (fp + tn + 1e-19)
-    print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {accuracy}\npre: {precision}\nrec: {recall}\nfpr: {fpr}\nauc: {f1}")
-
+    acc = metrics.accurary(tp, tn, fp, fn)
+    pre = metrics.precision(tp, tn, fp, fn)
+    rec = metrics.recall(tp, tn, fp, fn)
+    fprv = metrics.fpr(tp, tn, fp, fn)
+    auc = 2 * pre * rec / (pre + rec)
+    print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {acc}\npre: {pre}\nrec: {rec}\nfpr: {fprv}\nauc: {auc}")
 if __name__ == "__main__":
 
     try:
@@ -276,7 +279,7 @@ if __name__ == "__main__":
         train_size = int(0.6 * len(full_dataset))
         val_size = int(0.2 * len(full_dataset))
         test_size = len(full_dataset) - train_size - val_size
-        train_dataset, val_dataset, test_dataset = random_split(full_dataset, [train_size, val_size, test_size])
+        train_dataset, val_dataset, _ = random_split(full_dataset, [train_size, val_size, test_size])
 
         sampler = ImbalancedDatasetSampler(train_dataset)
         train_loader = DataLoader(train_dataset, batch_size=128, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
@@ -300,9 +303,8 @@ if __name__ == "__main__":
                 weight_decay=0.0
             )
         if args.mode == "test":
-            testing(test_loader, CONFIG["checkpoint"]["ScDeepRanTask"])
-
+            testing(test_loader)
 
     except Exception as e:
         logger.exception(e)
-    Notice().send("[+] Training finished!")
+    # Notice().send("[+] Training finished!")
