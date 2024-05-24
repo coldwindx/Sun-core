@@ -305,7 +305,6 @@ if __name__ == "__main__":
         train_dataset = ScDataset(CONFIG["datasets"]["train"])
         validate_dataset = ScDataset(CONFIG["datasets"]["validate"])
         trainz_dataset = ScDataset(CONFIG["datasets"]["trainz"])
-        full_dataset = ConcatDataset([train_dataset, validate_dataset, trainz_dataset])
 
         full_dataset = ConcatDataset([train_dataset, validate_dataset, trainz_dataset])
         train_size = int(0.6 * len(full_dataset))
