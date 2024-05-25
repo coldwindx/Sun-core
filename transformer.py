@@ -274,7 +274,8 @@ def training(train_loader, val_loader, checkpoint, **kwargs):
     trainer.logger._default_hp_metric = None
 
     model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
-    trainer.fit(model, train_loader, val_loader)
+    pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + CONFIG["checkpoint"]["ScPredicTask"]
+    trainer.fit(model, train_loader, val_loader, ckpt_path=pretrained_filename)
 
     return model
 
