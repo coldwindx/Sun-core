@@ -217,30 +217,27 @@ class DeepRanPredictor(DeepRan):
         preds = preds.reshape(labels.shape)
         return preds
 
-def training(train_loader, val_loader, checkpoint, **kwargs):
-    root_dir = os.path.join(checkpoint, "ScDeepRanTask")
+def training(train_loader, val_loader, args, **kwargs):
+    root_dir = os.path.join(CONFIG["checkpoint"]["path"], "ScDeepRanTask")
     os.makedirs(root_dir, exist_ok=True)
     trainer = pl.Trainer(
         default_root_dir=root_dir,
         callbacks=[
-            # StochasticWeightAveraging(swa_lrs=1e-2),
             ModelCheckpoint(every_n_epochs=1, save_top_k=-1)
         ],
         accelerator="auto",
-        # precision="bf16-true",
         devices=1,
-        max_epochs=80,
-        # accumulate_grad_batches=4,
-        # gradient_clip_val=10,
-        limit_train_batches= 5000, 
-        # limit_val_batches=5000,
-        # enable_progress_bar=False
+        max_epochs=30,
+        limit_train_batches= 5000
     )
     trainer.logger._default_hp_metric = None
 
     model = DeepRanPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
-    pretrained_filename = CONFIG["checkpoint"]["path"] + "ScDeepRanTask/lightning_logs" + CONFIG["checkpoint"]["ScDeepRanTask"]
-    trainer.fit(model, train_loader, val_loader, ckpt_path=pretrained_filename)
+    if args.enable_ckpt:
+        pretrained_filename = CONFIG["checkpoint"]["path"] + "ScDeepRanTask/lightning_logs" + CONFIG["checkpoint"]["ScDeepRanTask"]
+        trainer.fit(model, train_loader, val_loader, ckpt_path=pretrained_filename)
+    else:
+        trainer.fit(model, train_loader, val_loader)
 
     return model
 
@@ -269,28 +266,29 @@ if __name__ == "__main__":
     try:
         parser = argparse.ArgumentParser()
         parser.add_argument('--mode', default='train', type=str)
+        parser.add_argument('--enable_ckpt', default='false', type=bool)
         args = parser.parse_args()
 
         train_dataset = ScDataset(CONFIG["datasets"]["train"])
         validate_dataset = ScDataset(CONFIG["datasets"]["validate"])
-        test_dataset = ScDataset(CONFIG["datasets"]["test"])
+        trainz_dataset = ScDataset(CONFIG["datasets"]["trainz"])
 
-        full_dataset = ConcatDataset([train_dataset, validate_dataset])
+        full_dataset = ConcatDataset([train_dataset, validate_dataset, trainz_dataset])
         train_size = int(0.6 * len(full_dataset))
         val_size = int(0.2 * len(full_dataset))
         test_size = len(full_dataset) - train_size - val_size
-        train_dataset, val_dataset, _ = random_split(full_dataset, [train_size, val_size, test_size])
+        train_dataset, val_dataset, test_dataset = random_split(full_dataset, [train_size, val_size, test_size])
 
         sampler = ImbalancedDatasetSampler(train_dataset)
-        train_loader = DataLoader(train_dataset, batch_size=128, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
-        val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
-        test_loader = DataLoader(test_dataset, batch_size=128, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+        train_loader = DataLoader(train_dataset, batch_size=32, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
+        val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+        test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
         if args.mode == "train":
             model = training(
                 train_loader, 
                 val_loader,
-                CONFIG["checkpoint"]["path"],
+                args,
                 vocab_size = 30522,
                 input_dim=256,
                 model_dim=128,
