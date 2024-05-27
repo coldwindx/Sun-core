@@ -16,6 +16,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint, StochasticWeightAveragi
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
 
+import metrics
 from sampler import ImbalancedDatasetSampler
 from tools import Notice
 from dataset import ScDataset, sc_collate_fn
@@ -252,8 +253,8 @@ class ScPredictor(TransformerPredictor):
         preds = preds.reshape(labels.shape)
         return preds
 
-def training(train_loader, val_loader, checkpoint, **kwargs):
-    root_dir = os.path.join(checkpoint, "ScPredicTask")
+def training(train_dataset, val_dataset, args, **kwargs):
+    root_dir = os.path.join(CONFIG["checkpoint"]["path"], "ScPredicTask")
     os.makedirs(root_dir, exist_ok=True)
     trainer = pl.Trainer(
         default_root_dir=root_dir,
@@ -262,67 +263,75 @@ def training(train_loader, val_loader, checkpoint, **kwargs):
             ModelCheckpoint(every_n_epochs=1, save_top_k=-1)
         ],
         accelerator="auto",
-        # precision="bf16-true",
         devices=1,
         max_epochs=40,
         accumulate_grad_batches=4,
-        # gradient_clip_val=10,
         limit_train_batches= 5000, 
-        # limit_val_batches=5000,
-        # enable_progress_bar=False
     )
     trainer.logger._default_hp_metric = None
 
-    model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
-    pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + CONFIG["checkpoint"]["ScPredicTask"]
-    trainer.fit(model, train_loader, val_loader, ckpt_path=pretrained_filename)
+    sampler = ImbalancedDatasetSampler(train_dataset)
+    train_loader = DataLoader(train_dataset, batch_size=32, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
+    model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
+    if args.enable_ckpt:
+        pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + CONFIG["checkpoint"]["ScPredicTask"]
+        trainer.fit(model, train_loader, val_loader, ckpt_path=pretrained_filename)
+    else:
+        trainer.fit(model, train_loader, val_loader)
     return model
 
-def testing(test_loader, ckpt, **kwargs):
-    # load model
+def testing(test_dataset, **kwargs):
+    torch.set_float32_matmul_precision(precision="high")
     trainer = pl.Trainer(enable_checkpointing=False, logger=False)
-    pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + ckpt
+    test_dataset = ConcatDataset([ScDataset(CONFIG["datasets"]["test"]), ScDataset(CONFIG["datasets"]["testz"])])
+    labels = [label for _, label in test_dataset]
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+
+    pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + CONFIG["checkpoint"]["ScPredicTask"]
     classifier = ScPredictor.load_from_checkpoint(pretrained_filename)
     classifier.eval()
 
     predictions = trainer.predict(classifier, dataloaders=test_loader)
     predictions = torch.cat(predictions, dim=0)
     y_hat = [1 if i >= 0.5 else 0 for i in predictions]
-    labels = test_dataset.get_labels()
     
     tn, fp, fn, tp = confusion_matrix(labels, y_hat).ravel()
-    accuracy, precision, recall, f1 = accuracy_score(labels, y_hat), precision_score(labels, y_hat), recall_score(labels, y_hat), f1_score(labels, y_hat)
-    fpr = fp / (fp + tn + 1e-19)
-    print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {accuracy}\npre: {precision}\nrec: {recall}\nfpr: {fpr}\nauc: {f1}")
+    acc = metrics.accurary(tp, tn, fp, fn)
+    pre = metrics.precision(tp, tn, fp, fn)
+    rec = metrics.recall(tp, tn, fp, fn)
+    fprv = metrics.fpr(tp, tn, fp, fn)
+    auc = 2 * pre * rec / (pre + rec)
+    print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {acc}\npre: {pre}\nrec: {rec}\nfpr: {fprv}\nauc: {auc}")
 
 if __name__ == "__main__":
 
     try:
         parser = argparse.ArgumentParser()
         parser.add_argument('--mode', default='train', type=str)
+        parser.add_argument('--enable_ckpt', action="store_true", help="Run with ckpt")
         args = parser.parse_args()
 
         train_dataset = ScDataset(CONFIG["datasets"]["train"])
-        validate_dataset = ScDataset(CONFIG["datasets"]["validate"])
         trainz_dataset = ScDataset(CONFIG["datasets"]["trainz"])
+        validate_dataset = ScDataset(CONFIG["datasets"]["validate"])
+        test_dataset = ScDataset(CONFIG["datasets"]["test"])
+        testz_dataset = ScDataset(CONFIG["datasets"]["testz"])
 
         full_dataset = ConcatDataset([train_dataset, validate_dataset, trainz_dataset])
+        test_dataset = ConcatDataset([test_dataset, testz_dataset])
+
         train_size = int(0.6 * len(full_dataset))
         val_size = int(0.2 * len(full_dataset))
         test_size = len(full_dataset) - train_size - val_size
-        train_dataset, val_dataset, test_dataset = random_split(full_dataset, [train_size, val_size, test_size])
-
-        sampler = ImbalancedDatasetSampler(train_dataset)
-        train_loader = DataLoader(train_dataset, batch_size=32, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
-        val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
-        test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+        train_dataset, val_dataset, _ = random_split(full_dataset, [train_size, val_size, test_size])
 
         if args.mode == "train":
             model = training(
-                train_loader, 
-                val_loader,
-                CONFIG["checkpoint"]["path"],
+                train_dataset, 
+                val_dataset,
+                args,
                 vocab_size = 30522,
                 input_dim=64,
                 model_dim=32,
@@ -336,7 +345,7 @@ if __name__ == "__main__":
                 weight_decay=1e-4
             )
         if args.mode == "test":
-            testing(test_loader, CONFIG["checkpoint"]["ScPredicTask"])
+            testing(test_dataset)
     except Exception as e:
         logger.exception(e)
     Notice().send("[+] Training finished!")
