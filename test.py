@@ -81,19 +81,28 @@ def mc_collate_fn(batch_data):
     return padded_sent_seq_c1["input_ids"], padded_sent_seq_c2["input_ids"],padded_sent_seq_c3["input_ids"],padded_sent_seq_c4["input_ids"], data_length, labels
 
 if __name__ == "__main__":
-    # sent_seq = ["C:\\Windows\\system32\\rundll32.exe Windows.Storage.ApplicationData.dll,CleanupTemporaryState"]
-    # padded_sent_seq = tokenizer(sent_seq, padding=True, truncation=True, max_length=2048, return_tensors="pt")
-    output = tokenizer.encode("C:\\Windows\\system32\\rundll32.exe Windows.Storage.ApplicationData.dll,CleanupTemporaryState")
-    toutput = tokenizer.decode(output)
+    X = []
+    with open("/home/zhulin/datasets/X.txt", "r") as f:
+        X = [[int(x) for x in line.split(",")] for line in f.readlines()]
+    L = []
+    with open("/home/zhulin/datasets/L.txt", "r") as f:
+        L = [int(line) for line in f.readlines()]
+    X2 = []
+    with open("/home/zhulin/datasets/X2.txt", "r") as f:
+        X2 = [[int(x) for x in line.split(",")] for line in f.readlines()]
+    L2 = []
+    with open("/home/zhulin/datasets/L2.txt", "r") as f:
+        L2 = [int(line) for line in f.readlines()]
     
-    print(len(output), len(toutput))
-    print(output)
-    print(toutput)
-
-    with open(config["pretrain"]["bert_pretrain_uncased"] + "vocab.txt", "r+") as f:
-        vocab = [line.strip() for line in f.readlines()]
-
-    ttoutput = []
-    for i in output:
-        ttoutput.append(vocab[i])
-    print(ttoutput)
+    import numpy as np
+    X = np.array(X)
+    L = np.array(L)
+    X2 = np.array(X2)
+    L2 = np.array(L2)
+    array_dict = {
+        'X_train':X, 
+        'Y_train': L,
+        'X_test':X2, 
+        'Y_test': L2,
+    }
+    np.savez("/home/zhulin/datasets/deep_guard_dataset", **array_dict)

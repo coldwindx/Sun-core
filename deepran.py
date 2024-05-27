@@ -266,7 +266,7 @@ if __name__ == "__main__":
     try:
         parser = argparse.ArgumentParser()
         parser.add_argument('--mode', default='train', type=str)
-        parser.add_argument('--enable_ckpt', default='false', type=bool)
+        parser.add_argument('--enable_ckpt', action="store_true", help="Run with ckpt")
         args = parser.parse_args()
 
         train_dataset = ScDataset(CONFIG["datasets"]["train"])

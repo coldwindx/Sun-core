@@ -79,7 +79,7 @@ def mc_collate_fn(batch_data):
     padded_sent_seq_c3 = tokenizer(sent_seq_c3, padding=True, truncation=True, max_length=4096, return_tensors="pt")
     padded_sent_seq_c4 = tokenizer(sent_seq_c4, padding=True, truncation=True, max_length=4096, return_tensors="pt")
     return padded_sent_seq_c1["input_ids"], padded_sent_seq_c2["input_ids"],padded_sent_seq_c3["input_ids"],padded_sent_seq_c4["input_ids"], data_length, labels
-
+    
 if __name__ == "__main__":
     
     try:

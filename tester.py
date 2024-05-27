@@ -8,8 +8,10 @@ from sklearn.metrics import accuracy_score, confusion_matrix
 import lightning as pl
 import torch
 from torch.utils.data import DataLoader
+from torch.utils.data import ConcatDataset, DataLoader, random_split
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
+from tools import Config
 from transformer import ScPredictor
 from dataset import ScDataset, sc_collate_fn
 
@@ -18,8 +20,10 @@ random.seed(seed)
 torch.manual_seed(seed)                    # 为CPU设置随机种子
 torch.cuda.manual_seed(seed)               # 为当前GPU设置随机种子
 torch.cuda.manual_seed_all(seed)           # 为所有GPU设置随机种子
-SEED = torch.Generator().manual_seed(seed)
 pl.seed_everything(seed, workers=True)
+torch.set_float32_matmul_precision(precision="high")
+CONFIG = Config()
+
 
 def accurary(tp, tn, fp, fn):
     return (tp + tn) / (tp + tn + fp + fn)
@@ -35,15 +39,14 @@ def fpr(tp, tn, fp, fn):
 def test(ckpt):
     torch.set_float32_matmul_precision(precision="high")
     # load model
-    CHECKPOINT_PATH = "/home/zhulin/workspace/Sun-core/ckpt/ScPredicTask/lightning_logs/version_1/checkpoints/"
+    CHECKPOINT_PATH = "/home/zhulin/workspace/Sun-core/ckpt/ScPredicTask/lightning_logs/version_6372/checkpoints/"
 
     trainer = pl.Trainer(enable_checkpointing=False, logger=False)
-    
-    TEST_DATASETS_PATH = "/home/zhulin/datasets/cdatasets_test.txt"
-    test_dataset = ScDataset(TEST_DATASETS_PATH)
+    test_dataset = ConcatDataset([ScDataset(CONFIG["datasets"]["test"]), ScDataset(CONFIG["datasets"]["testz"])])
     test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
-    ckpt = f"epoch=74-step=46875.ckpt"
+
+    ckpt = f"epoch=36-step=46250.ckpt"
     pretrained_filename = os.path.join(CHECKPOINT_PATH, ckpt)
     classifier = ScPredictor.load_from_checkpoint(pretrained_filename)
     classifier.eval()
@@ -97,20 +100,14 @@ def test(ckpt):
         auc = 2 * pre * rec / (pre + rec)
         print(f"{sample}\t{tp}\t{tn}\t{fp}\t{fn}\t{acc}\t{pre}\t{rec}\t{fprv}\t{auc}")
 
-def main(ckpt):
+def main():
     torch.set_float32_matmul_precision(precision="high")
-    # load model
-    CHECKPOINT_PATH = "/home/zhulin/workspace/Sun-core/ckpt/ScPredicTask/lightning_logs/version_8/checkpoints/"
-
+    CHECKPOINT_PATH = "/home/zhulin/workspace/Sun-core/ckpt/ScPredicTask/lightning_logs/version_6372/checkpoints/epoch=36-step=46250.ckpt"
     trainer = pl.Trainer(enable_checkpointing=False, logger=False)
-    
-    TEST_DATASETS_PATH = "/home/zhulin/datasets/cdatasets_test.3.json"
-    test_dataset = ScDataset(TEST_DATASETS_PATH)
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+    test_dataset = ConcatDataset([ScDataset(CONFIG["datasets"]["test"]), ScDataset(CONFIG["datasets"]["testz"])])
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
-    ckpt = f"epoch=30-step=38750.ckpt"
-    pretrained_filename = os.path.join(CHECKPOINT_PATH, ckpt)
-    classifier = ScPredictor.load_from_checkpoint(pretrained_filename)
+    classifier = ScPredictor.load_from_checkpoint(CHECKPOINT_PATH)
     classifier.eval()
 
     predictions = trainer.predict(classifier, dataloaders=test_loader)
@@ -173,7 +170,7 @@ def main(ckpt):
    
 if __name__ == "__main__":
     try:
-        main(ckpt="")
+        main()
     except Exception as e:
         logger.exception(e)
     # Notice().send("[+] Test finished!")
