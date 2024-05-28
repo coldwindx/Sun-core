@@ -33,7 +33,7 @@ trainz_dataset = ScDataset(CONFIG["datasets"]["trainz"])
 full_dataset = ConcatDataset([train_dataset, validate_dataset])
 
 # 清洗数据
-txts = [re.split(r'[\\/=:,.;`<>?\^~%\*\'+$!&@\s{}\[\]()]\s*', data) for data, _ in full_dataset]
+txts = [re.split(r'[\\/=:_,.;`<>?\^~%\*\'+$!&@\s{}\[\]()]\s*', data) for data, _ in full_dataset]
 numeric_pattern = re.compile(r'^[#\d]+$')
 md5_pattern = re.compile(r'\b[a-fA-F0-9]{32}\b') 
 txts = [word for word in list(chain.from_iterable(txts)) if not md5_pattern.match(word) and not numeric_pattern.match(word)]
