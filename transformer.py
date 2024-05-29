@@ -114,6 +114,14 @@ class EncoderBlock(nn.Module):
         self.norm1 = nn.LayerNorm(input_dim)
         self.norm2 = nn.LayerNorm(input_dim)
         self.dropout = nn.Dropout(dropout)
+        self._reset_parameters()
+        
+    def _reset_parameters(self):
+        for name, param in self.linear_net.named_parameters():
+            if 'weight' in name:
+                nn.init.xavier_uniform_(param)
+            if 'bias' in name: 
+                nn.init.constant_(param, val=0) 
 
     def forward(self, x, mask=None):
         # Attention part
