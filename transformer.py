@@ -348,4 +348,4 @@ if __name__ == "__main__":
             testing(test_dataset)
     except Exception as e:
         logger.exception(e)
-    Notice().send("[+] Training finished!")
+    Notice().send("[+] transformer.py execute finished!")

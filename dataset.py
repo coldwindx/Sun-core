@@ -2,6 +2,7 @@ import json
 import os
 import sys
 from loguru import logger
+from tokenizers import Tokenizer
 import torch
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
@@ -12,6 +13,7 @@ from tools import Config
 
 config = Config()
 tokenizer = AutoTokenizer.from_pretrained(config["pretrain"]["bert_pretrain_uncased"])
+# tokenizer = AutoTokenizer.from_pretrained("token.json")
 
 class ScDataset(Dataset):
     def __init__(self, path):
@@ -37,6 +39,10 @@ def sc_collate_fn(batch_data):
     data_length = torch.tensor([sum(mask) for mask in padded_sent_seq["attention_mask"]])
     return padded_sent_seq["input_ids"], padded_sent_seq["attention_mask"], data_length, labels
 
+        # labels:
+        # input_ids:
+        # token_type_ids:
+        # attention_mask:[1,0]
 
 class MCDataset(Dataset):
     def __init__(self, path):

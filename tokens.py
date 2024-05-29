@@ -45,27 +45,3 @@ tokenizer.train_from_iterator(txts, trainer)
 tokenizer.save("token.json")
 
 print("tokens.py run over!")
-
-# import json
-# import re
-
-# from tools import Config
-
-# with open("token.json", "r+") as f:
-#     tokens = json.load(f)
-# vocabs = list(tokens["model"]["vocab"].keys())
-
-# # 排除仅包括数字的词
-# numeric_pattern = re.compile(r'^[#\d]+$')
-# vocabs = [word for word in vocabs if not numeric_pattern.match(word)]
-# # 排除疑似MD5哈希值
-# md5_pattern = re.compile(r'\b[a-fA-F0-9]{32}\b') 
-# vocabs = [word for word in vocabs if not md5_pattern.match(word)]
-# # 排除在bert_pretrain_uncased的词
-# config = Config()
-# with open(config["pretrain"]["bert_pretrain_uncased"] + "vocab.txt", "r+") as f:
-#     vocab_bert = [line.strip() for line in f.readlines()]
-# vocabs = [word for word in vocabs if word not in vocab_bert]
-
-# for word in vocabs[:993]:
-#     print(word)
