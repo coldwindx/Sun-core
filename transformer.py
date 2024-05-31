@@ -23,7 +23,7 @@ from dataset import ScDataset, sc_collate_fn
 from network import AttentionPooling, CosineWarmupScheduler, MaskedMeanPooling
 from tools import Config
 
-seed = 6
+seed = 42
 random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)                    # 为CPU设置随机种子
