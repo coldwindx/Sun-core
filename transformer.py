@@ -5,7 +5,7 @@ import random
 import sys
 from loguru import logger
 import numpy as np
-from sklearn.metrics import confusion_matrix, accuracy_score, f1_score, precision_score, recall_score
+from sklearn.metrics import confusion_matrix
 import torch
 import torch.nn as nn
 from torch import optim
@@ -20,7 +20,7 @@ import metrics
 from sampler import ImbalancedDatasetSampler
 from tools import Notice
 from dataset import ScDataset, sc_collate_fn
-from network import CosineWarmupScheduler, MaskedMeanPooling
+from network import AttentionPooling, CosineWarmupScheduler, MaskedMeanPooling
 from tools import Config
 
 seed = 6
@@ -62,14 +62,6 @@ class MultiheadAttention(nn.Module):
         self.qkv_proj = nn.Linear(input_dim, 3 * embed_dim)
         self.o_proj = nn.Linear(embed_dim, embed_dim)
 
-        self._reset_parameters()
-
-    def _reset_parameters(self):
-        nn.init.xavier_uniform_(self.qkv_proj.weight)
-        self.qkv_proj.bias.data.fill_(0)
-        nn.init.xavier_uniform_(self.o_proj.weight)
-        self.o_proj.bias.data.fill_(0)
-    
     def forward(self, x, mask=None, return_attention=False):
         batch_size, seq_length, embed_dim = x.size()
         qkv = self.qkv_proj(x)
@@ -114,14 +106,6 @@ class EncoderBlock(nn.Module):
         self.norm1 = nn.LayerNorm(input_dim)
         self.norm2 = nn.LayerNorm(input_dim)
         self.dropout = nn.Dropout(dropout)
-        self._reset_parameters()
-        
-    def _reset_parameters(self):
-        for name, param in self.linear_net.named_parameters():
-            if 'weight' in name:
-                nn.init.xavier_uniform_(param)
-            if 'bias' in name: 
-                nn.init.constant_(param, val=0) 
 
     def forward(self, x, mask=None):
         # Attention part
@@ -144,7 +128,7 @@ class TransformerEncoder(nn.Module):
         for layer in self.layers:
             x = layer(x, mask=mask)
         return x
-
+    
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=4096):
         super().__init__()
@@ -188,13 +172,13 @@ class TransformerPredictor(pl.LightningModule):
         )
         # Output classifier per sequence lement
         self.pooling_net = MaskedMeanPooling()
+        # self.pooling_net = AttentionPooling(self.hparams.model_dim, self.hparams.model_dim)
         self.output_net = nn.Sequential(
-            # nn.Linear(self.hparams.model_dim, self.hparams.model_dim),
-            # AttentionPooling(self.hparams.model_dim, self.hparams.model_dim),
-            nn.LayerNorm(self.hparams.model_dim),
+            nn.Linear(self.hparams.model_dim, self.hparams.model_dim // 2),
+            # nn.LayerNorm(self.hparams.model_dim),
             nn.ReLU(inplace=True),
-            nn.Dropout(self.hparams.dropout),
-            nn.Linear(self.hparams.model_dim, self.hparams.num_classes),
+            # nn.Dropout(self.hparams.dropout),
+            nn.Linear(self.hparams.model_dim // 2, self.hparams.num_classes),
             nn.Sigmoid()
         )
     
@@ -272,15 +256,15 @@ def training(train_dataset, val_dataset, args, **kwargs):
         ],
         accelerator="auto",
         devices=1,
-        max_epochs=40,
-        accumulate_grad_batches=4,
-        limit_train_batches= 5000, 
+        max_epochs=8,
+        # accumulate_grad_batches=8,
+        limit_train_batches= 0.01, 
     )
     trainer.logger._default_hp_metric = None
 
     sampler = ImbalancedDatasetSampler(train_dataset)
-    train_loader = DataLoader(train_dataset, batch_size=32, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=64, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
+    val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
     model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
     if args.enable_ckpt:
@@ -321,18 +305,12 @@ if __name__ == "__main__":
         parser.add_argument('--enable_ckpt', action="store_true", help="Run with ckpt")
         args = parser.parse_args()
 
-        train_dataset = ScDataset(CONFIG["datasets"]["train"])
-        trainz_dataset = ScDataset(CONFIG["datasets"]["trainz"])
-        validate_dataset = ScDataset(CONFIG["datasets"]["validate"])
+        full_dataset = ScDataset(CONFIG["datasets"]["train"])
         test_dataset = ScDataset(CONFIG["datasets"]["test"])
-        testz_dataset = ScDataset(CONFIG["datasets"]["testz"])
 
-        full_dataset = ConcatDataset([train_dataset, validate_dataset, trainz_dataset])
-        test_dataset = ConcatDataset([test_dataset, testz_dataset])
-
-        train_size = int(0.6 * len(full_dataset))
-        val_size = int(0.2 * len(full_dataset))
-        test_size = len(full_dataset) - train_size - val_size
+        val_size = 1024 * 16
+        test_size = 1024 * 16
+        train_size = len(full_dataset) - val_size - test_size
         train_dataset, val_dataset, _ = random_split(full_dataset, [train_size, val_size, test_size])
 
         if args.mode == "train":
@@ -342,15 +320,15 @@ if __name__ == "__main__":
                 args,
                 vocab_size = 30522,
                 input_dim=64,
-                model_dim=32,
+                model_dim=64,
                 num_heads=8,
                 num_classes=1,
                 num_layers=1,
-                dropout=0.5,
-                input_dropout=0.2,
-                lr=1e-5,
+                dropout=0.1,
+                input_dropout=0.1,
+                lr=1e-3,
                 warmup=50,
-                weight_decay=1e-4
+                weight_decay=1e-6
             )
         if args.mode == "test":
             testing(test_dataset)
