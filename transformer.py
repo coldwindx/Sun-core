@@ -258,7 +258,7 @@ def training(train_dataset, val_dataset, args, **kwargs):
         devices=1,
         max_epochs=8,
         # accumulate_grad_batches=8,
-        limit_train_batches= 0.01, 
+        limit_train_batches= 1024, 
     )
     trainer.logger._default_hp_metric = None
 
@@ -275,21 +275,17 @@ def training(train_dataset, val_dataset, args, **kwargs):
     return model
 
 def testing(test_dataset, **kwargs):
-    torch.set_float32_matmul_precision(precision="high")
-    trainer = pl.Trainer(enable_checkpointing=False, logger=False)
-    test_dataset = ConcatDataset([ScDataset(CONFIG["datasets"]["test"]), ScDataset(CONFIG["datasets"]["testz"])])
-    labels = test_dataset.labels
-    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
-
     pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + CONFIG["checkpoint"]["ScPredicTask"]
+    trainer = pl.Trainer(enable_checkpointing=False, logger=False)
     classifier = ScPredictor.load_from_checkpoint(pretrained_filename)
     classifier.eval()
 
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
     predictions = trainer.predict(classifier, dataloaders=test_loader)
     predictions = torch.cat(predictions, dim=0)
     y_hat = [1 if i >= 0.5 else 0 for i in predictions]
     
-    tn, fp, fn, tp = confusion_matrix(labels, y_hat).ravel()
+    tn, fp, fn, tp = confusion_matrix(test_dataset.labels, y_hat).ravel()
     acc = metrics.accurary(tp, tn, fp, fn)
     pre = metrics.precision(tp, tn, fp, fn)
     rec = metrics.recall(tp, tn, fp, fn)
@@ -308,8 +304,8 @@ if __name__ == "__main__":
         full_dataset = ScDataset(CONFIG["datasets"]["train"])
         test_dataset = ScDataset(CONFIG["datasets"]["test"])
 
-        val_size = 1024 * 16
-        test_size = 1024 * 16
+        val_size = 1024 * 64
+        test_size = 1024 * 64
         train_size = len(full_dataset) - val_size - test_size
         train_dataset, val_dataset, _ = random_split(full_dataset, [train_size, val_size, test_size])
 
@@ -326,7 +322,7 @@ if __name__ == "__main__":
                 num_layers=1,
                 dropout=0.1,
                 input_dropout=0.1,
-                lr=1e-3,
+                lr=1e-3 * 4,
                 warmup=50,
                 weight_decay=1e-6
             )
