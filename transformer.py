@@ -278,7 +278,7 @@ def testing(test_dataset, **kwargs):
     torch.set_float32_matmul_precision(precision="high")
     trainer = pl.Trainer(enable_checkpointing=False, logger=False)
     test_dataset = ConcatDataset([ScDataset(CONFIG["datasets"]["test"]), ScDataset(CONFIG["datasets"]["testz"])])
-    labels = [label for _, label in test_dataset]
+    labels = test_dataset.labels
     test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
     pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + CONFIG["checkpoint"]["ScPredicTask"]

@@ -217,7 +217,7 @@ class DeepRanPredictor(DeepRan):
         preds = preds.reshape(labels.shape)
         return preds
 
-def training(train_loader, val_loader, args, **kwargs):
+def training(train_dataset, val_dataset, args, **kwargs):
     root_dir = os.path.join(CONFIG["checkpoint"]["path"], "ScDeepRanTask")
     os.makedirs(root_dir, exist_ok=True)
     trainer = pl.Trainer(
@@ -232,6 +232,10 @@ def training(train_loader, val_loader, args, **kwargs):
     )
     trainer.logger._default_hp_metric = None
 
+    sampler = ImbalancedDatasetSampler(train_dataset)
+    train_loader = DataLoader(train_dataset, batch_size=32, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+
     model = DeepRanPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
     if args.enable_ckpt:
         pretrained_filename = CONFIG["checkpoint"]["path"] + "ScDeepRanTask/lightning_logs" + CONFIG["checkpoint"]["ScDeepRanTask"]
@@ -241,7 +245,7 @@ def training(train_loader, val_loader, args, **kwargs):
 
     return model
 
-def testing(test_loader, **kwargs):
+def testing(test_dataset, **kwargs):
     # load model
     pretrained_filename = CONFIG["checkpoint"]["path"] + "ScDeepRanTask/lightning_logs" + CONFIG["checkpoint"]["ScDeepRanTask"]
 
@@ -249,18 +253,19 @@ def testing(test_loader, **kwargs):
     classifier = DeepRanPredictor.load_from_checkpoint(pretrained_filename)
     classifier.eval()
 
+    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
     predictions = trainer.predict(classifier, dataloaders=test_loader)
     predictions = torch.cat(predictions, dim=0)
     y_hat = [1 if i >= 0.5 else 0 for i in predictions]
-    labels = test_dataset.get_labels()
-    
-    tn, fp, fn, tp = confusion_matrix(labels, y_hat).ravel()
+
+    tn, fp, fn, tp = confusion_matrix(test_dataset.labels, y_hat).ravel()
     acc = metrics.accurary(tp, tn, fp, fn)
     pre = metrics.precision(tp, tn, fp, fn)
     rec = metrics.recall(tp, tn, fp, fn)
     fprv = metrics.fpr(tp, tn, fp, fn)
     auc = 2 * pre * rec / (pre + rec)
     print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {acc}\npre: {pre}\nrec: {rec}\nfpr: {fprv}\nauc: {auc}")
+
 if __name__ == "__main__":
 
     try:
@@ -269,25 +274,18 @@ if __name__ == "__main__":
         parser.add_argument('--enable_ckpt', action="store_true", help="Run with ckpt")
         args = parser.parse_args()
 
-        train_dataset = ScDataset(CONFIG["datasets"]["train"])
-        validate_dataset = ScDataset(CONFIG["datasets"]["validate"])
-        trainz_dataset = ScDataset(CONFIG["datasets"]["trainz"])
+        full_dataset = ScDataset(CONFIG["datasets"]["train"])
+        test_dataset = ScDataset(CONFIG["datasets"]["test"])
 
-        full_dataset = ConcatDataset([train_dataset, validate_dataset, trainz_dataset])
         train_size = int(0.6 * len(full_dataset))
         val_size = int(0.2 * len(full_dataset))
         test_size = len(full_dataset) - train_size - val_size
-        train_dataset, val_dataset, test_dataset = random_split(full_dataset, [train_size, val_size, test_size])
-
-        sampler = ImbalancedDatasetSampler(train_dataset)
-        train_loader = DataLoader(train_dataset, batch_size=32, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
-        val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
-        test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+        train_dataset, val_dataset, _ = random_split(full_dataset, [train_size, val_size, test_size])
 
         if args.mode == "train":
             model = training(
-                train_loader, 
-                val_loader,
+                train_dataset, 
+                val_dataset,
                 args,
                 vocab_size = 30522,
                 input_dim=256,
@@ -301,8 +299,8 @@ if __name__ == "__main__":
                 weight_decay=0.0
             )
         if args.mode == "test":
-            testing(test_loader)
+            testing(test_dataset)
 
     except Exception as e:
         logger.exception(e)
-    # Notice().send("[+] Training finished!")
+    Notice().send("[+] deepran.py execute finished!")
