@@ -195,8 +195,7 @@ class TransformerPredictor(pl.LightningModule):
         if add_positional_encoding:
             x = self.positional_encoding(x)
         x = self.transformer(x, mask=mask)          # [Batch, SeqLen, ModDim]
-        x = x[:, 0, :].squeeze(1) + self.pooling_net(x, mask=mask)            # GlobalAveragePooling
-        # x = x[:, 0, :].squeeze(1)
+        x = self.pooling_net(x, mask=mask)            # GlobalAveragePooling
         x = self.output_net(x)
         return x
     
