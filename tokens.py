@@ -1,10 +1,8 @@
-from itertools import chain
 import re
 from tokenizers import Tokenizer
 from tokenizers.models import WordPiece
 
 from dataset import ScDataset
-from torch.utils.data import ConcatDataset
 from transformer import CONFIG
 
 tokenizer = Tokenizer(WordPiece(unk_token="[UNK]"))
@@ -28,15 +26,24 @@ tokenizer.post_processor = TemplateProcessing(
 
 # 加载数据集
 train_dataset = ScDataset(CONFIG["datasets"]["train"])
-validate_dataset = ScDataset(CONFIG["datasets"]["validate"])
-trainz_dataset = ScDataset(CONFIG["datasets"]["trainz"])
-full_dataset = ConcatDataset([train_dataset, validate_dataset])
 
 # 清洗数据
-txts = [re.split(r'[\\/=:_,.;`<>?\^~%\*\'+$!&@\s{}\[\]()]\s*', data) for data, _ in full_dataset]
+def process_string(s):
+    s = re.sub(r'[^0-9a-zA-Z]', ' ', s)
+    s = re.sub(r'(?<!\s)([A-Z])', r' \1', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
+# txts = [process_string(data) for data, _ in train_dataset]
 numeric_pattern = re.compile(r'^[#\d]+$')
-md5_pattern = re.compile(r'\b[a-fA-F0-9]{32}\b') 
-txts = [word for word in list(chain.from_iterable(txts)) if not md5_pattern.match(word) and not numeric_pattern.match(word)]
+md5_pattern = re.compile(r'\b[a-fA-F0-9]{32}\b')
+txts = []
+for data, _ in train_dataset:
+    s = process_string(data)
+    s = [word for word in s.split(" ") if not md5_pattern.match(word) and not numeric_pattern.match(word)]
+    txts.append(" ".join(s))
+
+# counter = collections.defaultdict(int)
+# txts = [word for word in list(chain.from_iterable(txts)) if not md5_pattern.match(word) and not numeric_pattern.match(word)]
 
 # 加载训练器开始训练
 from tokenizers.trainers import WordPieceTrainer

@@ -16,6 +16,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint, StochasticWeightAveragi
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
 
+from KAN import KAN
 import metrics
 from sampler import ImbalancedDatasetSampler
 from tools import Notice
@@ -95,13 +96,7 @@ class EncoderBlock(nn.Module):
         self.self_attn = MultiheadAttention(input_dim, input_dim, num_heads)
 
         # Two-layer MLP
-        self.linear_net = nn.Sequential(
-            nn.Linear(input_dim, dim_feedforward),
-            nn.Dropout(dropout),
-            nn.SiLU(inplace=True),      # 不会梯度消失
-            nn.Linear(dim_feedforward, input_dim),
-        )
-
+        self.linear_net = KAN([input_dim, dim_feedforward, input_dim], grid_size=7, spline_order=5)
         # Layers to apply in between the main layers
         self.norm1 = nn.LayerNorm(input_dim)
         self.norm2 = nn.LayerNorm(input_dim)
@@ -172,16 +167,8 @@ class TransformerPredictor(pl.LightningModule):
         )
         # Output classifier per sequence lement
         self.pooling_net = MaskedMeanPooling()
-        # self.pooling_net = AttentionPooling(self.hparams.model_dim, self.hparams.model_dim)
-        self.output_net = nn.Sequential(
-            nn.Linear(self.hparams.model_dim, self.hparams.model_dim // 2),
-            # nn.LayerNorm(self.hparams.model_dim),
-            nn.ReLU(inplace=True),
-            # nn.Dropout(self.hparams.dropout),
-            nn.Linear(self.hparams.model_dim // 2, self.hparams.num_classes),
-            nn.Sigmoid()
-        )
-    
+        self.output_net = KAN([self.hparams.model_dim, self.hparams.model_dim // 2, 1], grid_size=7, spline_order=5)
+
     def forward(self, x, mask=None, add_positional_encoding=True):
         """
         Args:
@@ -195,9 +182,8 @@ class TransformerPredictor(pl.LightningModule):
         if add_positional_encoding:
             x = self.positional_encoding(x)
         x = self.transformer(x, mask=mask)          # [Batch, SeqLen, ModDim]
-        x = x[:, 0, :].squeeze(1) + self.pooling_net(x, mask=mask)            # GlobalAveragePooling
-        # x = x[:, 0, :].squeeze(1)
-        x = self.output_net(x)
+        x = self.pooling_net(x, mask=mask)            # GlobalAveragePooling
+        x = F.sigmoid(self.output_net(x))
         return x
     
     def configure_optimizers(self):
