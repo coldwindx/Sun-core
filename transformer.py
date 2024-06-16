@@ -274,8 +274,12 @@ def training(train_dataset, val_dataset, args, **kwargs):
         trainer.fit(model, train_loader, val_loader)
     return model
 
-def testing(test_dataset, **kwargs):
-    pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + CONFIG["checkpoint"]["ScPredicTask"]
+def testing(test_dataset, args, **kwargs):
+    if args.use_checkpoint:
+        pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + CONFIG["checkpoint"]["ScPredicTask"]
+    else:
+        pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs"
+        pretrained_filename = pretrained_filename + f"/version_{args.version}/checkpoints/epoch={args.epoch}-step={args.iter}.ckpt"
     trainer = pl.Trainer(enable_checkpointing=False, logger=False)
     classifier = ScPredictor.load_from_checkpoint(pretrained_filename)
     classifier.eval()
@@ -299,6 +303,10 @@ if __name__ == "__main__":
         parser = argparse.ArgumentParser()
         parser.add_argument('--mode', default='train', type=str)
         parser.add_argument('--enable_ckpt', action="store_true", help="Run with ckpt")
+        parser.add_argument('--version', default='8248', type=str)
+        parser.add_argument('--epoch', default='15', type=str)
+        parser.add_argument('--iter', default='15', type=str)
+        parser.add_argument('--use_checkpoint', action="store_true")
         args = parser.parse_args()
 
         full_dataset = ScDataset(CONFIG["datasets"]["train"])
@@ -327,7 +335,7 @@ if __name__ == "__main__":
                 weight_decay=1e-6
             )
         if args.mode == "test":
-            testing(test_dataset)
+            testing(test_dataset, args)
     except Exception as e:
         logger.exception(e)
     Notice().send("[+] transformer.py execute finished!")
