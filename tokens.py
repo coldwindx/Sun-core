@@ -56,19 +56,41 @@ def create_tokenizer():
     print("tokens.py run over!")
 
 def create_vocab():
-    dataset = ScDataset(CONFIG["datasets"]["train"])
-    txt = [re.split(r'[\\/=:,.;`<>?\^~%\*\'+$!&@\s{}\[\]()]\s*', data.lower()) for data, _ in dataset]
-    txt = [" ".join(line) for line in txt]
+    # dataset = ScDataset(CONFIG["datasets"]["train"])
+    # txt = [re.split(r'[\\_/=:,.;`<>?\^~%\*\'+$!&@\s{}\[\]()]\s*', data.lower()) for data, _ in dataset]
+    # txt = [" ".join(line) for line in txt]
 
-    tv = TfidfVectorizer(use_idf=True, smooth_idf=True, norm=None, max_features=35535 * 16,
-                         max_df=0.9, min_df=0.01)
-    x = tv.fit_transform(txt)
+    # tv = TfidfVectorizer(use_idf=True, smooth_idf=True, norm=None, max_features=35535 * 16)
+    # x = tv.fit_transform(txt)
 
-    df = pd.DataFrame({'word': tv.get_feature_names_out(), 'tfidf': x.sum(axis=0).tolist()[0]})
-    df.sort_values(by="tfidf", ascending=False).reset_index(inplace=True)
-    df.to_csv('tfidf.csv')
+    # df = pd.DataFrame({'word': tv.get_feature_names_out(), 'tfidf': x.sum(axis=0).tolist()[0]})
+    # df = df[~df['word'].str.contains(r'\d')]
+    # df = df.sort_values(by="tfidf", ascending=False, inplace=True)
+    # df.to_csv('tfidf.csv')
+
+    df = pd.read_csv('tfidf.csv')
+    df = df[~df['word'].str.match(r'^(.)\1+$').fillna(False)]
+    df.sort_values(by="tfidf", ascending=False, inplace=True)
     print(df[:1024])
     print(len(df))
+
+    with open("vocab.txt", "r") as f:
+        vocab = [word.strip() for word in f.readlines()]
+    nvocab = []
+    c: int = 0
+    for row in df.itertuples():
+        if row.word not in vocab:
+            if f"[unused{c}]" not in vocab:
+                break
+            for i, v in enumerate(vocab):
+                if v == f"[unused{c}]":
+                    nvocab.append(row.word)
+                    vocab[i] = row.word
+                    c += 1
+                    break
+    json.dump(nvocab, open("vocab_additional.json", "w"))
+    with open("nvocab.txt", "w+") as f:
+        f.writelines([word + "\n" for word in vocab])
 
 def replace_vocab():
     with open("vocab.txt", "r") as f:
@@ -89,6 +111,7 @@ def replace_vocab():
                     c += 1
                     break
     json.dump(nvocab, open("vocab_additional.json", "w"))
+
 if __name__ == "__main__":
-    # create_vocab()
-    replace_vocab()
+    create_vocab()
+    # replace_vocab()

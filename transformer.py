@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from torch import optim
 import torch.nn.functional as F
-from torch.utils.data import ConcatDataset, DataLoader, random_split
+from torch.utils.data import DataLoader, random_split
 import lightning as pl
 from lightning.pytorch.callbacks import ModelCheckpoint, StochasticWeightAveraging
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -20,7 +20,7 @@ import metrics
 from sampler import ImbalancedDatasetSampler
 from tools import Notice
 from dataset import ScDataset, sc_collate_fn
-from network import AttentionPooling, BCEFocalLoss, CosineWarmupScheduler, MaskedMeanPooling
+from network import CosineWarmupScheduler, MaskedMeanPooling
 from tools import Config
 
 seed = 42
@@ -322,7 +322,7 @@ if __name__ == "__main__":
                 num_layers=1,
                 dropout=0.1,
                 input_dropout=0.1,
-                lr=1e-4,
+                lr=1e-3,
                 warmup=50,
                 weight_decay=1e-6
             )
