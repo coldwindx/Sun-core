@@ -267,19 +267,19 @@ def training(train_dataset, val_dataset, args, **kwargs):
     val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
     model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
-    if args.enable_ckpt:
-        pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + CONFIG["checkpoint"]["ScPredicTask"]
-        trainer.fit(model, train_loader, val_loader, ckpt_path=pretrained_filename)
+    if args.ckpt:
+        pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs"
+        pretrained_filename = pretrained_filename + f"/version_{args.version}/checkpoints/{args.ckpt}"
     else:
         trainer.fit(model, train_loader, val_loader)
     return model
 
 def testing(test_dataset, args, **kwargs):
-    if args.use_checkpoint:
-        pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + CONFIG["checkpoint"]["ScPredicTask"]
-    else:
+    if args.ckpt:
         pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs"
-        pretrained_filename = pretrained_filename + f"/version_{args.version}/checkpoints/epoch={args.epoch}-step={args.iter}.ckpt"
+        pretrained_filename = pretrained_filename + f"/version_{args.version}/checkpoints/{args.ckpt}"
+    else:
+        pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + CONFIG["checkpoint"]["ScPredicTask"]
     trainer = pl.Trainer(enable_checkpointing=False, logger=False)
     classifier = ScPredictor.load_from_checkpoint(pretrained_filename)
     classifier.eval()
@@ -302,11 +302,8 @@ if __name__ == "__main__":
     try:
         parser = argparse.ArgumentParser()
         parser.add_argument('--mode', default='train', type=str)
-        parser.add_argument('--enable_ckpt', action="store_true", help="Run with ckpt")
         parser.add_argument('--version', default='8248', type=str)
-        parser.add_argument('--epoch', default='15', type=str)
-        parser.add_argument('--iter', default='15', type=str)
-        parser.add_argument('--use_checkpoint', action="store_true")
+        parser.add_argument('--ckpt', default='15', type=str)
         args = parser.parse_args()
 
         full_dataset = ScDataset(CONFIG["datasets"]["train"])
