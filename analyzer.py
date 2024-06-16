@@ -1,3 +1,4 @@
+import argparse
 import os
 import random
 import sys
@@ -7,6 +8,10 @@ from matplotlib import pyplot as plt
 import numpy as np
 import torch
 from transformers import AutoTokenizer
+
+from dataset import ScDataset, sc_collate_fn
+from tools import Config
+from transformer import ScPredictor
 
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
@@ -90,10 +95,40 @@ def fp_analyzer(sample):
             continue
         print(datas[i])
 
+def analyFP(args, **kwargs):
+    from torch.utils.data import ConcatDataset, DataLoader, random_split
+    CONFIG = Config()
+    test_dataset = ScDataset(CONFIG["datasets"]["test"])
+    if args.ckpt:
+        pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs"
+        pretrained_filename = pretrained_filename + f"/version_{args.version}/checkpoints/{args.ckpt}"
+    else:
+        pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + CONFIG["checkpoint"]["ScPredicTask"]
+    trainer = pl.Trainer(enable_checkpointing=False, logger=False)
+    classifier = ScPredictor.load_from_checkpoint(pretrained_filename)
+    classifier.eval()
+
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+    predictions = trainer.predict(classifier, dataloaders=test_loader)
+    predictions = torch.cat(predictions, dim=0)
+    y_hat = [1 if i >= 0.5 else 0 for i in predictions]
+    
+    index = []
+    for i in range(len(y_hat)):
+        if y_hat[i] == 1 and test_dataset.labels[i] == 0:
+            print(test_dataset.data[i])
+            index.append(i)
+    print("all: ", len(index))
+
 if __name__ == "__main__":
     try:
-        # distribution()
-        fp_analyzer("kad29f77ee86ed9827158347befa8998d")
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--mode', default='train', type=str)
+        parser.add_argument('--version', default='8248', type=str)
+        parser.add_argument('--ckpt', default='15', type=str)
+        args = parser.parse_args()
+
+        analyFP(args)
     except Exception as e:
         logger.exception(e)
     # Notice().send("[+] Test finished!")
