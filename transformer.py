@@ -20,7 +20,7 @@ import metrics
 from sampler import ImbalancedDatasetSampler
 from tools import Notice
 from dataset import ScDataset, sc_collate_fn
-from network import AttentionPooling, CosineWarmupScheduler, MaskedMeanPooling
+from network import AttentionPooling, BCEFocalLoss, CosineWarmupScheduler, MaskedMeanPooling
 from tools import Config
 
 seed = 42
@@ -322,7 +322,7 @@ if __name__ == "__main__":
                 num_layers=1,
                 dropout=0.1,
                 input_dropout=0.1,
-                lr=1e-3,
+                lr=1e-4,
                 warmup=50,
                 weight_decay=1e-6
             )

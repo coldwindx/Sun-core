@@ -1,3 +1,4 @@
+import json
 import re
 import pandas as pd
 
@@ -59,13 +60,35 @@ def create_vocab():
     txt = [re.split(r'[\\/=:,.;`<>?\^~%\*\'+$!&@\s{}\[\]()]\s*', data.lower()) for data, _ in dataset]
     txt = [" ".join(line) for line in txt]
 
-    tv = TfidfVectorizer(use_idf=True, smooth_idf=True, norm=None, max_features=35535 * 16)
+    tv = TfidfVectorizer(use_idf=True, smooth_idf=True, norm=None, max_features=35535 * 16,
+                         max_df=0.9, min_df=0.01)
     x = tv.fit_transform(txt)
 
     df = pd.DataFrame({'word': tv.get_feature_names_out(), 'tfidf': x.sum(axis=0).tolist()[0]})
-    df = df.sort_values(by="tfidf", ascending=False)
-
+    df.sort_values(by="tfidf", ascending=False).reset_index(inplace=True)
+    df.to_csv('tfidf.csv')
     print(df[:1024])
+    print(len(df))
 
+def replace_vocab():
+    with open("vocab.txt", "r") as f:
+        vocab = [word.strip() for word in f.readlines()]
+    tokens = json.load(open("token.json", 'r'))
+    tokens = tokens["model"]["vocab"]
+    nvocab = []
+    c: int = 0
+    for key, _ in tokens.items():
+        if any(char.isdigit() for char in key):
+            continue
+        if key not in vocab:
+            if f"[unused{c}]" not in vocab:
+                break
+            for i, v in enumerate(vocab):
+                if v == f"[unused{c}]":
+                    nvocab.append(key)
+                    c += 1
+                    break
+    json.dump(nvocab, open("vocab_additional.json", "w"))
 if __name__ == "__main__":
-    create_vocab()
+    # create_vocab()
+    replace_vocab()
