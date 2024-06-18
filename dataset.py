@@ -2,18 +2,16 @@ import json
 import os
 import sys
 from loguru import logger
-from tokenizers import Tokenizer
 import torch
 from torch.utils.data import Dataset
-from transformers import AutoTokenizer
+from transformers import BertTokenizer
 
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
 from tools import Config
 
 config = Config()
-tokenizer = AutoTokenizer.from_pretrained(config["pretrain"]["bert_pretrain_uncased"])
-# tokenizer = AutoTokenizer.from_pretrained("token.json")
+tokenizer = BertTokenizer.from_pretrained(config["pretrain"]["bert_pretrain_uncased"], use_fast=True)
 
 class ScDataset(Dataset):
     def __init__(self, path):
