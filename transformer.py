@@ -256,14 +256,14 @@ def training(train_dataset, val_dataset, args, **kwargs):
         ],
         accelerator="auto",
         devices=1,
-        max_epochs=8,
+        max_epochs=30,
         # accumulate_grad_batches=8,
-        limit_train_batches= 1024, 
+        # limit_train_batches= 1024, 
     )
     trainer.logger._default_hp_metric = None
 
-    sampler = ImbalancedDatasetSampler(train_dataset)
-    train_loader = DataLoader(train_dataset, batch_size=64, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
+    # sampler = ImbalancedDatasetSampler(train_dataset)
+    train_loader = DataLoader(train_dataset, batch_size=64, collate_fn=sc_collate_fn, num_workers=4, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
     model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
@@ -327,7 +327,7 @@ if __name__ == "__main__":
                 num_layers=1,
                 dropout=0.1,
                 input_dropout=0.1,
-                lr=1e-3 * 4,
+                lr=1e-4,
                 warmup=50,
                 weight_decay=1e-6
             )
