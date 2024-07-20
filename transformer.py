@@ -255,7 +255,7 @@ def training(train_dataset, val_dataset, args, **kwargs):
             StochasticWeightAveraging(swa_lrs=1e-2),
             ModelCheckpoint(every_n_epochs=1, save_top_k=-1)
         ],
-        accelerator="gpu", devices=8, num_nodes=1, strategy="ddp"
+        accelerator="gpu", devices=8, num_nodes=1, strategy="ddp",
         devices=1,
         max_epochs=30,
         # plugins=[SLURMEnvironment()]
