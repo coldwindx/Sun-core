@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch.utils.data import ConcatDataset, DataLoader, random_split
 import lightning as pl
 from lightning.pytorch.callbacks import ModelCheckpoint, StochasticWeightAveraging
-from lightning.pytorch.plugins import SLURMEnvironment
+from lightning.pytorch.plugins.environments import SLURMEnvironment
 __PATH__ = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(__PATH__)  
 
@@ -256,7 +256,6 @@ def training(train_dataset, val_dataset, args, **kwargs):
             ModelCheckpoint(every_n_epochs=1, save_top_k=-1)
         ],
         accelerator="gpu", devices=8, num_nodes=1, strategy="ddp",
-        devices=1,
         max_epochs=30,
         # plugins=[SLURMEnvironment()]
         # accumulate_grad_batches=8,
