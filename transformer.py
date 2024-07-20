@@ -262,8 +262,8 @@ def training(train_dataset, val_dataset, args, **kwargs):
     )
     trainer.logger._default_hp_metric = None
 
-    # sampler = ImbalancedDatasetSampler(train_dataset)
-    train_loader = DataLoader(train_dataset, batch_size=64, collate_fn=sc_collate_fn, num_workers=4, shuffle=True)
+    sampler = ImbalancedDatasetSampler(train_dataset)
+    train_loader = DataLoader(train_dataset, batch_size=64, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
     val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
     model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
@@ -314,6 +314,11 @@ if __name__ == "__main__":
         train_size = len(full_dataset) - val_size - test_size
         train_dataset, val_dataset, _ = random_split(full_dataset, [train_size, val_size, test_size])
 
+        if args.mode == "env":
+            from lightning.pytorch.plugins.environments import SLURMEnvironment
+            environment = SLURMEnvironment()
+            environment.detect()
+
         if args.mode == "train":
             model = training(
                 train_dataset, 
@@ -328,7 +333,7 @@ if __name__ == "__main__":
                 dropout=0.1,
                 input_dropout=0.1,
                 lr=1e-4,
-                warmup=50,
+                warmup= 5 * len(train_dataset) // 64,
                 weight_decay=1e-6
             )
         if args.mode == "test":
