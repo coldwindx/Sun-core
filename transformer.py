@@ -257,6 +257,7 @@ def training(train_dataset, val_dataset, args, **kwargs):
         accelerator="auto",
         devices=1,
         max_epochs=30,
+        plugins=[SLURMEnvironment()]
         # accumulate_grad_batches=8,
         # limit_train_batches= 1024, 
     )
