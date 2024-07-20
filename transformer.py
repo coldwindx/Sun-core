@@ -268,11 +268,7 @@ def training(train_dataset, val_dataset, args, **kwargs):
     val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
     model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
-    if args.ckpt:
-        pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs"
-        pretrained_filename = pretrained_filename + f"/version_{args.version}/checkpoints/{args.ckpt}"
-    else:
-        trainer.fit(model, train_loader, val_loader)
+    trainer.fit(model, train_loader, val_loader)
     return model
 
 def testing(test_dataset, args, **kwargs):
