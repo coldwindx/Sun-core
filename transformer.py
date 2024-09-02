@@ -11,6 +11,8 @@ import torch.nn as nn
 from torch import optim
 import torch.nn.functional as F
 from torch.utils.data import ConcatDataset, DataLoader, random_split
+from torcheval.metrics.functional import binary_confusion_matrix, binary_accuracy, binary_precision, binary_recall, binary_f1_score, binary_auroc
+
 import lightning as pl
 from lightning.pytorch.callbacks import ModelCheckpoint, StochasticWeightAveraging
 from lightning.pytorch.plugins.environments import SLURMEnvironment
@@ -148,38 +150,36 @@ class PositionalEncoding(nn.Module):
         x = x + self.pe[:, : x.size(1)]
         return x
 
-class TransformerPredictor(pl.LightningModule):
-    def __init__(self, vocab_size, input_dim, model_dim, num_classes, num_heads, num_layers, lr, warmup, max_iters, dropout=0.0, input_dropout=0.0, weight_decay=0.0):
+
+class TransformerPredictor(nn.Module):
+    def __init__(self, vocab_size, input_dim, model_dim, num_classes, num_heads, num_layers, dropout=0.0, input_dropout=0.0):
         super().__init__()
-        self.save_hyperparameters()
-        self._create_model()
-    def _create_model(self):
         # Input dim -> Model dim
         self.input_net = nn.Sequential(
-            nn.Embedding(self.hparams.vocab_size, self.hparams.input_dim),
-            nn.Dropout(self.hparams.input_dropout), 
-            nn.Linear(self.hparams.input_dim, self.hparams.model_dim)
+            nn.Embedding(vocab_size, input_dim),
+            nn.Dropout(input_dropout), 
+            nn.Linear(input_dim, model_dim)
         )
 
         # Positional encoding for sequences
-        self.positional_encoding = PositionalEncoding(d_model=self.hparams.model_dim)
+        self.positional_encoding = PositionalEncoding(d_model=model_dim)
         # Transformer
         self.transformer = TransformerEncoder(
-            num_layers=self.hparams.num_layers,
-            input_dim = self.hparams.model_dim,
-            dim_feedforward=2 * self.hparams.model_dim,
-            num_heads=self.hparams.num_heads,
-            dropout=self.hparams.dropout
+            num_layers=num_layers,
+            input_dim = model_dim,
+            dim_feedforward=2 * model_dim,
+            num_heads=num_heads,
+            dropout=dropout
         )
         # Output classifier per sequence lement
         self.pooling_net = MaskedMeanPooling()
-        # self.pooling_net = AttentionPooling(self.hparams.model_dim, self.hparams.model_dim)
+        # self.pooling_net = AttentionPooling(model_dim, model_dim)
         self.output_net = nn.Sequential(
-            nn.Linear(self.hparams.model_dim, self.hparams.model_dim // 2),
-            # nn.LayerNorm(self.hparams.model_dim),
+            nn.Linear(model_dim, model_dim // 2),
+            # nn.LayerNorm(model_dim),
             nn.ReLU(inplace=True),
-            # nn.Dropout(self.hparams.dropout),
-            nn.Linear(self.hparams.model_dim // 2, self.hparams.num_classes),
+            # nn.Dropout(dropout),
+            nn.Linear(model_dim // 2, num_classes),
             nn.Sigmoid()
         )
     
@@ -199,25 +199,25 @@ class TransformerPredictor(pl.LightningModule):
         x = self.pooling_net(x, mask=mask)            # GlobalAveragePooling
         x = self.output_net(x)
         return x
+
+class ScPredictor(pl.LightningModule):
+    def __init__(self, vocab_size, input_dim, model_dim, num_classes, num_heads, num_layers, lr, warmup, max_iters, dropout=0.0, input_dropout=0.0, weight_decay=0.0):
+        super().__init__()
+        self.save_hyperparameters()
+        self.net = TransformerPredictor(vocab_size, input_dim, model_dim, num_classes, num_heads, num_layers, dropout, input_dropout)
+
+    def forward(self, x, mask=None, add_positional_encoding=True):
+         return self.net(x, mask=mask, add_positional_encoding=add_positional_encoding)
     
     def configure_optimizers(self):
-        optimizer = optim.Adam(self.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weight_decay)
-        self.lr_scheduler = CosineWarmupScheduler(optimizer, warmup=self.hparams.warmup, max_iters=self.hparams.max_iters)
-        return optimizer
+        optimizer = optim.SGD(self.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weight_decay, momentum=0.9)
+        scheduler = CosineWarmupScheduler(optimizer, warmup=self.hparams.warmup, epochs=self.hparams.max_iters)
+        return [optimizer], [scheduler]
     
-    def optimizer_step(self, *args, **kwargs):
-        super().optimizer_step(*args, **kwargs)
-        self.lr_scheduler.step()
-    
-    def training_step(self, batch, batch_idx):
-        raise NotImplementedError
-    def validation_step(self, batch, batch_idx):
-        raise NotImplementedError
-    def test_step(self, batch, batch_idx):
-        raise NotImplementedError
+    def on_before_optimizer_step(self, optimizer):
+        self.log("learning_rate", optimizer.param_groups[0]['lr'], on_step=True, sync_dist=True)
 
-class ScPredictor(TransformerPredictor):
-    def _calculate_loss(self, batch, mode="train"):
+    def training_step(self, batch, batch_idx):
         inp_data, mask, _, labels = batch
         preds = self.forward(inp_data, mask=mask, add_positional_encoding=True)
         preds = preds.reshape(labels.shape)
@@ -225,20 +225,32 @@ class ScPredictor(TransformerPredictor):
         loss = F.binary_cross_entropy(preds, labels)
         acc = ((preds >= 0.5) == labels).float().mean()
 
-        self.log("%s_loss" % mode, loss, on_epoch=True, enable_graph=True)
-        self.log("%s_acc" % mode, acc, on_epoch=True, enable_graph=True)
-        return loss, acc
-
-    def training_step(self, batch, batch_idx):
-        loss, _ = self._calculate_loss(batch, mode="train")
+        self.log("train_loss", loss, on_epoch=True, enable_graph=True, sync_dist=True)
+        self.log("train_acc", acc, on_epoch=True, enable_graph=True, sync_dist=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, _ = self._calculate_loss(batch, mode="val")
-        return loss
+        inp_data, mask, _, labels = batch
+        preds = self.forward(inp_data, mask=mask, add_positional_encoding=True)
+        preds = preds.reshape(labels.shape)
+
+        loss = F.binary_cross_entropy(preds, labels)
+        acc = ((preds >= 0.5) == labels).float().mean()
+
+        self.log("valid_loss", loss, on_epoch=True, enable_graph=True, sync_dist=True)
+        self.log("valid_acc", acc, on_epoch=True, enable_graph=True, sync_dist=True)
+    
     def test_step(self, batch, batch_idx):
-        loss, _ = self._calculate_loss(batch, mode="test")
-        return loss
+        inp_data, mask, _, labels = batch
+        preds = self.forward(inp_data, mask=mask, add_positional_encoding=True)
+        preds = preds.reshape(labels.shape)
+
+        loss = F.binary_cross_entropy(preds, labels)
+        acc = ((preds >= 0.5) == labels).float().mean()
+
+        self.log("test_loss", loss, on_epoch=True, enable_graph=True, sync_dist=True)
+        self.log("test_acc", acc, on_epoch=True, enable_graph=True, sync_dist=True)
+
     def predict_step(self, batch, batch_idx):
         # padded_sent_seq["input_ids"], padded_sent_seq["attention_mask"], data_length, labels
         inp_data, mask, _, labels = batch
@@ -255,52 +267,81 @@ def training(train_dataset, val_dataset, args, **kwargs):
             StochasticWeightAveraging(swa_lrs=1e-2),
             ModelCheckpoint(every_n_epochs=1, save_top_k=-1)
         ],
-        accelerator="gpu", devices=1, num_nodes=1, strategy="ddp",
+        # accelerator="gpu", devices=1, num_nodes=1, strategy="ddp",
+        accelerator="auto",
         max_epochs=30,
-        # plugins=[SLURMEnvironment()]
-        # accumulate_grad_batches=8,
-        # limit_train_batches= 1024, 
+        accumulate_grad_batches=8,
+        # limit_train_batches= 4, 
+        # limit_val_batches=4,
     )
     trainer.logger._default_hp_metric = None
 
     sampler = ImbalancedDatasetSampler(train_dataset)
-    train_loader = DataLoader(train_dataset, batch_size=64, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
-    val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=8, collate_fn=sc_collate_fn, num_workers=4, sampler=sampler)
+    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
-    model = ScPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
+    model = ScPredictor(max_iters=trainer.max_epochs * 4, **kwargs)
     trainer.fit(model, train_loader, val_loader)
     return model
 
+# def testing(test_dataset, args, **kwargs):
+#     if args.ckpt:
+#         pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs"
+#         pretrained_filename = pretrained_filename + f"/version_{args.version}/checkpoints/{args.ckpt}"
+#     else:
+#         pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + CONFIG["checkpoint"]["ScPredicTask"]
+#     trainer = pl.Trainer(enable_checkpointing=False, logger=False)
+#     classifier = ScPredictor.load_from_checkpoint(pretrained_filename)
+#     classifier.eval()
+
+#     test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
+#     predictions = trainer.predict(classifier, dataloaders=test_loader)
+#     predictions = torch.cat(predictions, dim=0)
+#     y_hat = [1 if i >= 0.5 else 0 for i in predictions]
+    
+#     tn, fp, fn, tp = confusion_matrix(test_dataset.labels, y_hat).ravel()
+#     acc = metrics.accurary(tp, tn, fp, fn)
+#     pre = metrics.precision(tp, tn, fp, fn)
+#     rec = metrics.recall(tp, tn, fp, fn)
+#     fprv = metrics.fpr(tp, tn, fp, fn)
+#     auc = 2 * pre * rec / (pre + rec)
+#     print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {acc}\npre: {pre}\nrec: {rec}\nfpr: {fprv}\nauc: {auc}")
+
 def testing(test_dataset, args, **kwargs):
-    if args.ckpt:
-        pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs"
-        pretrained_filename = pretrained_filename + f"/version_{args.version}/checkpoints/{args.ckpt}"
-    else:
-        pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + CONFIG["checkpoint"]["ScPredicTask"]
+    pretrained_filename = CONFIG["checkpoint"]["path"] + "ScPredicTask/lightning_logs" + \
+                            f"/version_{args.version}/checkpoints/{args.ckpt}" if args.ckpt else CONFIG["checkpoint"]["ScPredicTask"]
+
+    ### load model
     trainer = pl.Trainer(enable_checkpointing=False, logger=False)
     classifier = ScPredictor.load_from_checkpoint(pretrained_filename)
     classifier.eval()
-
-    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
-    predictions = trainer.predict(classifier, dataloaders=test_loader)
-    predictions = torch.cat(predictions, dim=0)
-    y_hat = [1 if i >= 0.5 else 0 for i in predictions]
     
-    tn, fp, fn, tp = confusion_matrix(test_dataset.labels, y_hat).ravel()
-    acc = metrics.accurary(tp, tn, fp, fn)
-    pre = metrics.precision(tp, tn, fp, fn)
-    rec = metrics.recall(tp, tn, fp, fn)
-    fprv = metrics.fpr(tp, tn, fp, fn)
-    auc = 2 * pre * rec / (pre + rec)
-    print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {acc}\npre: {pre}\nrec: {rec}\nfpr: {fprv}\nauc: {auc}")
+    ### load dataset
+    test_loader = DataLoader(test_dataset, batch_size=8, shuffle=False, collate_fn=sc_collate_fn, num_workers=4)
 
+    ### predict scores
+    scores = trainer.predict(classifier, dataloaders=test_loader)
+    scores = torch.cat(scores, dim=0)
+
+    ### binary_confusion_matrix
+    labels = torch.tensor([test_dataset.dataset[i][1] for i in test_dataset.indices], device="cuda")
+    cm = binary_confusion_matrix(scores, labels)
+    tp, fn, fp, tn = cm[0, 0], cm[0, 1], cm[1, 0], cm[1, 1]
+
+    accuracy = binary_accuracy(scores, labels, threshold = 0.5)
+    precision = binary_precision(scores, labels, threshold = 0.5).item()
+    recall = binary_recall(scores, labels, threshold = 0.5).item()
+    f1 = binary_f1_score(scores, labels, threshold = 0.5).item()
+    auc = binary_auroc(scores, labels).item()
+
+    print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {accuracy}\npre: {precision}\nrec: {recall}\nauc: {auc}\nf1: {f1}")
 if __name__ == "__main__":
 
     try:
         parser = argparse.ArgumentParser()
         parser.add_argument('--mode', default='train', type=str)
-        parser.add_argument('--version', default='8248', type=str)
-        parser.add_argument('--ckpt', default='15', type=str)
+        parser.add_argument('--version', default='0', type=str)
+        parser.add_argument('--ckpt', default='epoch=29-step=2999010.ckpt', type=str)
         args = parser.parse_args()
 
         full_dataset = ScDataset(CONFIG["datasets"]["train"])
@@ -325,7 +366,7 @@ if __name__ == "__main__":
                 dropout=0.1,
                 input_dropout=0.1,
                 lr=1e-4,
-                warmup= 5 * len(train_dataset) // 64,
+                warmup=2 * 4,
                 weight_decay=1e-6
             )
         if args.mode == "test":

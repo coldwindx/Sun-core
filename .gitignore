@@ -164,3 +164,4 @@ config.yml
 *.out
 *.ckpt
 *.npy
+tmp/
