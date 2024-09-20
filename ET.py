@@ -6,17 +6,16 @@ import re
 
 from loguru import logger
 import numpy as np
+import datatable as dt
 
 from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics import confusion_matrix
 import torch
 from torch.utils.data import random_split
 from dataset import ScDataset
 from tools import Config, Notice
-import metrics
 from torcheval.metrics.functional import binary_confusion_matrix, binary_accuracy, \
-            binary_precision, binary_recall, binary_f1_score, binary_auroc, binary_precision_recall_curve
+            binary_precision, binary_recall, binary_f1_score, binary_auroc
 
 random.seed(42)
 np.random.seed(42)
@@ -53,26 +52,14 @@ def testing(test_datasets):
     with open("./ckpt/ScETTask/TfidfVectorizer.ckpt", "rb") as f:
         tv = pickle.load(f)
     test_txt = [re.split(r'[\\/=:,.;`<>?\^~%\*\'+$!&@\s{}\[\]()]\s*', data) for data, _ in test_datasets]
-    # txt = [re.split(r'[\\/=:,.;`<>?\^~%\*\'+$!&@\s{}\[\]()]\s*', test_datasets.dataset[i][0]) for i in test_datasets.indices]
-    # txt = [re.split(r'[\\/=:,.;`<>?\^~%\*\'+$!&@\s{}\[\]()]\s*', line) for ds in test_dataset for line in ds.data]
-    # test_txt = [re.split(r'[\\/=:,.;`<>?\^~%\*\'+$!&@\s{}\[\]()]\s*', line) for line in test_dataset.data]
     test_txt = [" ".join(line) for line in test_txt]
     X_test = tv.transform(test_txt)
     with open("./ckpt/ScETTask/ExtraTreesClassifier.ckpt", "rb") as f:
         clf = pickle.load(f)
     predictions = clf.predict(X_test)
 
-    # y_hat = [1 if i >= 0.5 else 0 for i in predictions]
-    # labels = [label for _, label in test_datasets]
-    
-    # tn, fp, fn, tp = confusion_matrix(labels, y_hat).ravel()
-    # acc = metrics.accurary(tp, tn, fp, fn)
-    # pre = metrics.precision(tp, tn, fp, fn)
-    # rec = metrics.recall(tp, tn, fp, fn)
-    # fprv = metrics.fpr(tp, tn, fp, fn)
-    # auc = 2 * pre * rec / (pre + rec)
-    # print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {acc}\npre: {pre}\nrec: {rec}\nfpr: {fprv}\nauc: {auc}")
-
+    ### save scores
+    np.save(open("/mnt/sdd1/data/zhulin/jack/scores/ExtraTreesClassifier.npy", "wb"), predictions)
     ### binary_confusion_matrix
     scores = torch.from_numpy(predictions).cuda()
     labels = torch.tensor([label for _, label in test_datasets], device="cuda")
@@ -87,34 +74,37 @@ def testing(test_datasets):
 
     print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {accuracy}\npre: {precision}\nrec: {recall}\nauc: {auc}\nf1: {f1}")
 
-if __name__ == "__main__":
-    try:
-        parser = argparse.ArgumentParser()
-        parser.add_argument('--mode', default='train', type=str)
-        args = parser.parse_args()
 
-        full_dataset = ScDataset(CONFIG["datasets"]["train"])
-        test_dataset = ScDataset(CONFIG["datasets"]["test"])
+parser = argparse.ArgumentParser()
+parser.add_argument('--task', default='train', type=str)
+parser.add_argument('--dataset', type=str)
+args = parser.parse_args()
 
-        # train_dataset = ScDataset(CONFIG["datasets"]["train"])
-        # validate_dataset = ScDataset(CONFIG["datasets"]["validate"])
-        # # test_dataset = ScDataset(CONFIG["datasets"]["test"])
-        # trainz_dataset = ScDataset(CONFIG["datasets"]["trainz"])
-        # # testz_dataset = ScDataset(CONFIG["datasets"]["testz"])
-        # full_dataset = ConcatDataset([train_dataset, validate_dataset, trainz_dataset])
+pattern = r'[\\/=:,.;`<>?\^~%\*\'+$!&@\s{}\[\]()]\s*'
 
-        # if args.mode == "tfidf":
-        # create_vocab(full_dataset)
-        
-        train_size = int(0.6 * len(full_dataset))
-        val_size = int(0.2 * len(full_dataset))
-        test_size = len(full_dataset) - train_size - val_size
-        train_dataset, val_dataset, _ = random_split(full_dataset, [train_size, val_size, test_size])
-        if args.mode == "train":
-            training(train_dataset, val_dataset)
-        # if args.mode == "test":
-            # test_dataset = ConcatDataset([ScDataset(CONFIG["datasets"]["test"]), ScDataset(CONFIG["datasets"]["testz"])])
-            testing(test_dataset)
-    except Exception as e:
-        logger.exception(e)
-    Notice().send("[+] Training finished!")
+if args.task == "eval":
+    # load model
+    tv = pickle.load(open("./ckpt/ScETTask/TfidfVectorizer.ckpt", "rb"))
+    clf = pickle.load(open("./ckpt/ScETTask/ExtraTreesClassifier.ckpt", "rb"))
+    # load dataset
+    dataset = dt.fread(args.dataset, fill=True).to_pandas()
+    # dataset["channel"] = dataset["channel"].apply(lambda txt: " ".join(re.split(pattern, txt)))
+    # X = dataset["channel"].to_numpy()
+
+    # scores = clf.predict(tv.transform(X))
+    # np.save(open("/mnt/sdd1/data/zhulin/jack/scores/ExtraTreesClassifier.npy", "wb"), scores)
+    scores = np.load("/mnt/sdd1/data/zhulin/jack/scores/ExtraTreesClassifier.npy", allow_pickle=True)
+    ### binary_confusion_matrix
+    scores = torch.from_numpy(scores).cuda()
+    labels = torch.from_numpy(dataset["label"].to_numpy(dtype=np.int32)).cuda()
+
+    cm = binary_confusion_matrix(scores, labels)
+    tp, fn, fp, tn = cm[0, 0], cm[0, 1], cm[1, 0], cm[1, 1]
+
+    accuracy = binary_accuracy(scores, labels, threshold = 0.5)
+    precision = binary_precision(scores, labels, threshold = 0.5).item()
+    recall = binary_recall(scores, labels, threshold = 0.5).item()
+    f1 = binary_f1_score(scores, labels, threshold = 0.5).item()
+    auc = binary_auroc(scores, labels).item()
+
+    print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {accuracy}\npre: {precision}\nrec: {recall}\nauc: {auc}\nf1: {f1}")

@@ -17,11 +17,13 @@ class ScDataset(Dataset):
     def __init__(self, path):
         self.data, self.labels = [], []
         with open(path, 'r') as f:
+            cnt = 0
             for line in f.readlines():
                 result = json.loads(line)
                 self.data.append(result["channel"])
                 self.labels.append(result["label"])
-
+                cnt += 1
+                if cnt == 1024: break
     def __len__(self):
         return len(self.data)
 
@@ -87,7 +89,8 @@ def mc_collate_fn(batch_data):
 if __name__ == "__main__":
     
     try:
-        pass
+        full_dataset = ScDataset(config["datasets"]["train"])
+        
     except Exception as e:
         logger.exception(e)
     # Notice().send("[+] Datasets generating finished!\n")

@@ -160,6 +160,8 @@ class DeepRan(pl.LightningModule):
             add_positional_encoding: If True, we add the positional encoding to the input.
                                       Might not be desired for some tasks.
         """
+        import pdb
+        pdb.set_trace()
         text, sorted_seq_lengths, desorted_indices = prepare_pack_padded_sequence(x, lengths)
         embedded = self.input_net(text)
         sorted_seq_lengths = sorted_seq_lengths.cpu()
