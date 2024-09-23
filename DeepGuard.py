@@ -1,28 +1,21 @@
 import argparse
-import os
-import random
-from loguru import logger
 import numpy as np
+from loguru import logger
 from torch import nn
 from torch import optim
 from torch.utils.data import Dataset, DataLoader, random_split
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint, StochasticWeightAveraging
 import torch
 import torch.nn.functional as F
+from torcheval.metrics.functional import *
 import lightning as pl
 
-from tools import Config, Notice
+from tools import Config
 import metrics
 
-seed = 6
-random.seed(seed)
-np.random.seed(seed)
-torch.manual_seed(seed)                    # 为CPU设置随机种子
-torch.cuda.manual_seed(seed)               # 为当前GPU设置随机种子
-torch.cuda.manual_seed_all(seed)           # 为所有GPU设置随机种子
-pl.seed_everything(seed, workers=True)
-torch.set_float32_matmul_precision(precision="high")
 CONFIG = Config()
+pl.seed_everything(42, workers=True)
+torch.set_float32_matmul_precision(precision="high")
 
 class AutoEncoder(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, dropout=0.4):
@@ -105,151 +98,90 @@ class DeepGuardPredictor(DeepGuard):
         return loss
 
 class DeepGuardDataset(Dataset):
-    def __init__(self, mode = "train"):
-        dataset = np.load(CONFIG["datasets"]["deep_guard_dataset"])
-        if mode == "train":
-            self.data = torch.from_numpy(dataset["X_train"]).float()
-            self.labels = torch.from_numpy(dataset["Y_train"]).float()
-            self.data = torch.nn.functional.normalize(self.data, dim=0)
-
-        if mode == "test":
-            self.data = torch.from_numpy(dataset["X_test"]).float()
-            self.labels = torch.from_numpy(dataset["Y_test"]).float()
-            self.data = torch.nn.functional.normalize(self.data, dim=0)
-
+    def __init__(self, path):
+        dataset = np.load(path)
+        self.datas = dataset["X"].astype(np.float32)
+        self.labels = dataset["label"].astype(np.float32)
     def __len__(self):
-        return len(self.data)
+        return len(self.datas)
 
     def __getitem__(self, idx):
-        return self.data[idx], self.labels[idx]
+        return self.datas[idx], self.labels[idx]
     def get_labels(self):
         return self.labels
 
 def training(train_dataset, val_dataset, args, **kwargs):
-    root_dir = os.path.join(CONFIG["checkpoint"]["path"], "DeepGuardTask")
-    os.makedirs(root_dir, exist_ok=True)
-    trainer = pl.Trainer(
-        default_root_dir=root_dir,
-        callbacks=[ModelCheckpoint(every_n_epochs=1, save_top_k=-1)],
-        accelerator="auto",
-        devices=1,
-        max_epochs=50,
-        # accumulate_grad_batches=4,
-        # limit_train_batches= 5000, 
-        # enable_progress_bar=False
-    )
-    trainer.logger._default_hp_metric = None
-    
+
     train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False, num_workers=4)
 
+    trainer = pl.Trainer(
+        callbacks=[StochasticWeightAveraging(swa_lrs=1e-2), ModelCheckpoint(every_n_epochs=1, save_top_k=-1)],
+        # accelerator="gpu", devices=1, num_nodes=1, strategy="ddp",
+        accelerator="auto",
+        max_epochs=100,
+        accumulate_grad_batches=8
+    )
+    trainer.logger._default_hp_metric = None
+    ### start to train
     model = DeepGuardPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
-    if args.enable_ckpt:
-        pretrained_filename = CONFIG["checkpoint"]["path"] + "DeepGuardTask/lightning_logs" + CONFIG["checkpoint"]["DeepGuardTask"]
-        trainer.fit(model, train_loader, val_loader, ckpt_path=pretrained_filename)
-    else:
-        trainer.fit(model, train_loader, val_loader)
-    return model
+    trainer.fit(model, train_loader, val_loader)
 
-def testing(test_dataset, **kwargs):
-    # load model
-    pretrained_filename = CONFIG["checkpoint"]["path"] + "DeepGuardTask/lightning_logs" + CONFIG["checkpoint"]["DeepGuardTask"]
-
-    trainer = pl.Trainer(enable_checkpointing=False, logger=False)
-    classifier = DeepGuardPredictor.load_from_checkpoint(pretrained_filename)
-    classifier.eval()
-
+def testing(predictor, test_dataset, **kwargs):
+    trainer = pl.Trainer(enable_checkpointing=False, logger=False, devices="auto")
     test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4)
-    labels = DeepGuardDataset("test").labels.numpy()
-    scores = trainer.predict(classifier, dataloaders=test_loader)
-    scores = torch.cat(scores, dim=0).numpy()
 
-    print(len(scores), len(labels))
+    scores = trainer.predict(predictor, dataloaders=test_loader)
+    scores = torch.cat(scores, dim=0).cuda()
+    labels = torch.from_numpy(test_dataset.labels).flatten().cuda().int()
+  
+    f1s, thress, idx = [], [], scores.argsort(descending=True)
+    for k in range(100, len(scores), 100):
+        thress.append(scores[idx[k]])
+        # f1s.append(binary_f1_score(scores, labels, threshold = scores[idx[k]]).item())
+        precision = binary_precision(scores, labels, threshold = scores[idx[k]]).item()
+        recall = binary_recall(scores, labels, threshold = scores[idx[k]]).item()
+        f1s.append(abs(precision - recall))
+ 
+    thres = thress[np.array(f1s).argmin()]
 
-    from sklearn.metrics import (accuracy_score, auc, confusion_matrix, f1_score,
-                                precision_score, recall_score, roc_curve)
+    cm = binary_confusion_matrix(scores, labels, threshold = thres)
+    tp, fn, fp, tn = cm[0, 0], cm[0, 1], cm[1, 0], cm[1, 1]
 
-    def plot_roc(labels, scores):
-        fpr, tpr, thresholds = roc_curve(labels, scores)
-        maxindex = (tpr-fpr).tolist().index(max(tpr-fpr))
-        threshold = thresholds[maxindex]
-        print('异常阈值', threshold)
-        auc_score = auc(fpr, tpr)
-        print('auc值: {:.4f}'.format(auc_score))
-        return threshold, auc_score
-
-
-    def eval(labels, pred):
-        plot_roc(labels, pred)
-        print(confusion_matrix(labels, pred))
-        a, b, c, d = accuracy_score(labels, pred), precision_score(
-            labels, pred), recall_score(labels, pred), f1_score(labels, pred)
-        print("acc:{:.4f},pre{:.4f},rec:{:.4f}, f1:{:.4f}".format(a, b, c, d))
-        return a, b, c, d
+    accuracy = binary_accuracy(scores, labels, threshold = thres)
+    precision = binary_precision(scores, labels, threshold = thres).item()
+    recall = binary_recall(scores, labels, threshold = thres).item()
+    f1 = binary_f1_score(scores, labels, threshold = thres).item()
+    auc = binary_auroc(scores, labels).item()
+    logger.info(f"\ntp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {accuracy}\npre: {precision}\nrec: {recall}\nauc: {auc}\nf1: {f1}")
 
 
-    def matrix(true_graph_labels, scores):
-        t, auc = plot_roc(true_graph_labels, scores)
-        true_graph_labels = np.array(true_graph_labels)
-        scores = np.array(scores)
-        pred = np.ones(len(scores))
-        pred[scores < t] = 0
-        print(confusion_matrix(true_graph_labels, pred))
-        print("acc:{:.4f},pre{:.4f},rec:{:.4f}, f1:{:.4f}".format(accuracy_score(true_graph_labels, pred), precision_score(
-            true_graph_labels, pred), recall_score(true_graph_labels, pred), f1_score(true_graph_labels, pred)))
-        return auc, precision_score(true_graph_labels, pred), recall_score(true_graph_labels, pred), f1_score(true_graph_labels, pred)
+parser = argparse.ArgumentParser()
+parser.add_argument('--task', default='eval', type=str)
+parser.add_argument('--path', default='/mnt/sdd1/data/zhulin/jack/datasets/deepguard.train.npz', type=str)
+parser.add_argument('--model', default='./lightning_logs/version_1/checkpoints/epoch=100-step=15501.ckpt', type=str)
+parser.add_argument('--enable_ckpt', action="store_true", help="Run with ckpt")
+args = parser.parse_args()
 
-    pred = torch.zeros(len(scores))
-    idx = scores.argsort()[::-1]  # 从大到小
+if args.task == "train":
+    dataset = DeepGuardDataset(args.path)
+    train_dataset, val_dataset = random_split(dataset, [int(0.8 * len(dataset)), len(dataset) - int(0.8 * len(dataset))])
+    
+    model = training(
+        train_dataset, 
+        val_dataset,
+        args,
+        input_dim=22,
+        model_dim=16,
+        output_dim=8,
+        dropout=0.2,
+        lr=1e-4,
+        warmup=50,
+        weight_decay=1e-6
+    )
 
-    # for k in [500, 2000, 4000, 6000, 8000, 10000]:
-    #     print('============ k=', k)
-    #     nidx = np.ascontiguousarray(idx[:k])
-    #     pred[np.sort(nidx)] = 1  # 异常分数最高的K为样本判定为异常
-    #     a, b, c, d = eval(labels.astype(np.longfloat), pred)
-    #     print("acc:{:.4f},pre{:.4f},rec:{:.4f}, f1:{:.4f}".format(a, b, c, d))
-
-    y_hat = [1 if i >= scores[idx[4000]] else 0 for i in scores]
-
-    tn, fp, fn, tp = confusion_matrix(labels, y_hat).ravel()
-    acc = metrics.accurary(tp, tn, fp, fn)
-    pre = metrics.precision(tp, tn, fp, fn)
-    rec = metrics.recall(tp, tn, fp, fn)
-    fprv = metrics.fpr(tp, tn, fp, fn)
-    auc = 2 * pre * rec / (pre + rec)
-    print(f"tp: {tp}\ntn: {tn}\nfp: {fp}\nfn: {fn}\nacc: {acc}\npre: {pre}\nrec: {rec}\nfpr: {fprv}\nauc: {auc}")
-
-if __name__ == "__main__":
-
-    try:
-        parser = argparse.ArgumentParser()
-        parser.add_argument('--mode', default='train', type=str)
-        parser.add_argument('--enable_ckpt', action="store_true", help="Run with ckpt")
-        args = parser.parse_args()
-
-        train_dataset = DeepGuardDataset("train")
-        test_dataset = DeepGuardDataset("test")
-
-        train_size = int(0.6 * len(train_dataset))
-        val_size = int(0.2 * len(train_dataset))
-        test_size = len(train_dataset) - train_size - val_size
-        train_dataset, val_dataset, _ = random_split(train_dataset, [train_size, val_size, test_size])
-
-        if args.mode == "train":
-            model = training(
-                train_dataset, 
-                val_dataset,
-                args,
-                input_dim=22,
-                model_dim=16,
-                output_dim=8,
-                dropout=0.2,
-                lr=1e-4,
-                warmup=50,
-                weight_decay=1e-6
-            )
-        if args.mode == "test":
-            testing(test_dataset)
-    except Exception as e:
-        logger.exception(e)
-    Notice().send("[+] Training finished!")
+if args.task == "eval":
+    dataset = DeepGuardDataset(args.path)
+    predictor = DeepGuardPredictor.load_from_checkpoint(args.model)
+    predictor.eval()
+    testing(predictor, dataset)

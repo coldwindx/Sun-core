@@ -1,0 +1,8 @@
+dropout: 0.2
+input_dim: 22
+lr: 0.0001
+max_iters: 123800
+model_dim: 16
+output_dim: 8
+warmup: 50
+weight_decay: 1.0e-06
