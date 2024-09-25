@@ -1,5 +1,6 @@
 import argparse
 import numpy as np
+import datatable as dt
 from loguru import logger
 from torch import nn
 from torch import optim
@@ -11,7 +12,6 @@ from torcheval.metrics.functional import *
 import lightning as pl
 
 from tools import Config
-import metrics
 
 CONFIG = Config()
 pl.seed_everything(42, workers=True)
@@ -97,11 +97,26 @@ class DeepGuardPredictor(DeepGuard):
         loss = F.mse_loss(x, h, reduce=False).mean(dim=1)
         return loss
 
+# class DeepGuardDataset(Dataset):
+#     def __init__(self, path):
+#         dataset = np.load(path)
+#         self.datas = dataset["X"].astype(np.float32)
+#         self.labels = dataset["label"].astype(np.float32)
+#     def __len__(self):
+#         return len(self.datas)
+
+#     def __getitem__(self, idx):
+#         return self.datas[idx], self.labels[idx]
+#     def get_labels(self):
+#         return self.labels
+
 class DeepGuardDataset(Dataset):
     def __init__(self, path):
-        dataset = np.load(path)
-        self.datas = dataset["X"].astype(np.float32)
-        self.labels = dataset["label"].astype(np.float32)
+        dataset = dt.fread(path, fill=True).to_pandas()
+        events = ["ProcessStart", "ProcessEnd", "ThreadStart", "ThreadEnd", "ImageLoad", "FileIOWrite", "FileIORead", "FileIOFileCreate", "FileIORename", "FileIOCreate", "FileIOCleanup", "FileIOClose", "FileIODelete", "FileIOFileDelete", "RegistryCreate", "RegistrySetValue", "RegistryOpen", "RegistryDelete", "RegistrySetInformation", "RegistryQuery", "RegistryQueryValue", "CallStack"]
+        x = [dataset["channel"].apply(lambda x:x.count(event)).to_numpy() for event in events]
+        self.datas = np.vstack(x).T.astype(np.float32)
+        self.labels = dataset["label"].to_numpy()
     def __len__(self):
         return len(self.datas)
 
@@ -127,12 +142,14 @@ def training(train_dataset, val_dataset, args, **kwargs):
     model = DeepGuardPredictor(max_iters=trainer.max_epochs * len(train_loader), **kwargs)
     trainer.fit(model, train_loader, val_loader)
 
-def testing(predictor, test_dataset, **kwargs):
-    trainer = pl.Trainer(enable_checkpointing=False, logger=False, devices="auto")
-    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4)
+def testing(predictor, test_dataset, output, **kwargs):
+    # trainer = pl.Trainer(enable_checkpointing=False, logger=False, devices="auto")
+    # test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False, num_workers=4)
 
-    scores = trainer.predict(predictor, dataloaders=test_loader)
-    scores = torch.cat(scores, dim=0).cuda()
+    # scores = trainer.predict(predictor, dataloaders=test_loader)
+    # scores = torch.cat(scores, dim=0).cuda()
+    # np.save(open(output, "wb"), scores.cpu().numpy())
+    scores = torch.from_numpy(np.load(output)).cuda()
     labels = torch.from_numpy(test_dataset.labels).flatten().cuda().int()
   
     f1s, thress, idx = [], [], scores.argsort(descending=True)
@@ -142,8 +159,10 @@ def testing(predictor, test_dataset, **kwargs):
         precision = binary_precision(scores, labels, threshold = scores[idx[k]]).item()
         recall = binary_recall(scores, labels, threshold = scores[idx[k]]).item()
         f1s.append(abs(precision - recall))
- 
-    thres = thress[np.array(f1s).argmin()]
+    
+    f1sid = np.argsort(np.array(f1s))
+    thres = thress[f1sid[5]]
+    print(thres)
 
     cm = binary_confusion_matrix(scores, labels, threshold = thres)
     tp, fn, fp, tn = cm[0, 0], cm[0, 1], cm[1, 0], cm[1, 1]
@@ -158,9 +177,12 @@ def testing(predictor, test_dataset, **kwargs):
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--task', default='eval', type=str)
-parser.add_argument('--path', default='/mnt/sdd1/data/zhulin/jack/datasets/deepguard.train.npz', type=str)
-parser.add_argument('--model', default='./lightning_logs/version_1/checkpoints/epoch=100-step=15501.ckpt', type=str)
+# parser.add_argument('--path', default='/mnt/sdd1/data/zhulin/jack/datasets/deepguard.train.npz', type=str)
+parser.add_argument('--path', default='/mnt/sdd1/data/zhulin/jack/cdatasets.test.5.csv', type=str)
+parser.add_argument('--model', default='/mnt/sdd1/data/zhulin/jack/models/DeepGuard-100.ckpt', type=str)
+parser.add_argument('--output', default='/mnt/sdd1/data/zhulin/jack/scores/DeepGuardPredictor.npy', type=str)
 parser.add_argument('--enable_ckpt', action="store_true", help="Run with ckpt")
+
 args = parser.parse_args()
 
 if args.task == "train":
@@ -184,4 +206,4 @@ if args.task == "eval":
     dataset = DeepGuardDataset(args.path)
     predictor = DeepGuardPredictor.load_from_checkpoint(args.model)
     predictor.eval()
-    testing(predictor, dataset)
+    testing(predictor, dataset, args.output)
