@@ -160,6 +160,7 @@ cython_debug/
 #.idea/
 
 ckpt/
+!ckpt/ScETTask
 config.yml
 *.out
 *.ckpt
